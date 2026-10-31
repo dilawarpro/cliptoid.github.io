@@ -1344,13 +1344,13 @@ body#sss_body #footer a:focus-visible {
  :root {
   --cliptoid-pink: #fc00ff;
   --cliptoid-cyan: #00dbde;
-   --cliptoid-gradient: linear-gradient(to right, #00dbde, #fc00ff);
+   --cliptoid-gradient: linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%);
 }
 
 body#sss_body #splash {
   padding: .35rem 1rem .75rem;
    background: #fc00ff;
-   background: -webkit-linear-gradient(to right, #00dbde, #fc00ff);
+   background: -webkit-linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%);
    background: var(--cliptoid-gradient);
  }
 
@@ -3020,12 +3020,12 @@ body#sss_body #cliptoid-home-howto .cliptoid-step p {
 :root {
   --cliptoid-ink: #172033;
   --cliptoid-muted: #526176;
-  --cliptoid-blue: #2563eb;
+  --cliptoid-blue: linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%)
   --cliptoid-blue-dark: #1d4ed8;
   --cliptoid-border: #e1e7ef;
   --cliptoid-page: #f6f8fb;
   --cliptoid-surface: #fff;
-  --cliptoid-gradient: linear-gradient(to right, #2563eb, #1d4ed8);
+  --cliptoid-gradient: linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%)
 }
 
 body#sss_body,

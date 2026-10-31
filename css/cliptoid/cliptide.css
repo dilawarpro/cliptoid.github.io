@@ -242,7 +242,7 @@ body {
   font-weight: 700;
   text-align: center;
   text-decoration: none;
-  background: #fc00ff;
+  background: #635BFF;
   background: var(--cliptoid-gradient);
   border: 0;
   border-radius: 9px;
@@ -718,7 +718,7 @@ body {
 }
 
 .cliptide-download--primary {
-  background: #fc00ff;
+  background: #635BFF;
   background: var(--cliptoid-gradient);
 }
 
@@ -821,7 +821,7 @@ body {
   right: 0;
   left: 0;
   height: 4px;
-  background: linear-gradient(90deg, #00dbde, #fc00ff, #00dbde);
+  background: linear-gradient(90deg, #00dbde, #635BFF, #00dbde);
   background-size: 200% 100%;
   content: "";
   animation: cliptide-progress 1.6s linear infinite;
@@ -1342,14 +1342,14 @@ body#sss_body #footer a:focus-visible {
 }
 
  :root {
-  --cliptoid-pink: #fc00ff;
+  --cliptoid-pink: #635BFF;
   --cliptoid-cyan: #00dbde;
    --cliptoid-gradient: linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%);
 }
 
 body#sss_body #splash {
   padding: .35rem 1rem .75rem;
-   background: #fc00ff;
+   background: #635BFF;
    background: -webkit-linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%);
    background: var(--cliptoid-gradient);
  }
@@ -1397,8 +1397,8 @@ body#sss_body #submit {
   margin: 0 0 0 .55rem;
   padding: .45rem .85rem;
   font-size: .9rem;
-  background: #fc00ff;
-  background: -webkit-linear-gradient(to right, #00dbde, #fc00ff);
+  background: #635BFF;
+  background: -webkit-linear-gradient(to right, #00dbde, #635BFF);
   background: var(--cliptoid-gradient);
 }
 
@@ -1412,8 +1412,8 @@ body#sss_body #twt_promo_image .download_with_app_header,
 body#sss_body .cliptide-button,
 body#sss_body .pure-button-primary,
 body#sss_body .cliptoid-feature-icon {
-  background-color: #fc00ff;
-  background-image: -webkit-linear-gradient(to right, #00dbde, #fc00ff);
+  background-color: #635BFF;
+  background-image: -webkit-linear-gradient(to right, #00dbde, #635BFF);
   background: var(--cliptoid-gradient);
 }
 
@@ -1584,7 +1584,7 @@ body#sss_body .cliptoid-benefit__icon {
   width: 2.65rem;
   height: 2.65rem;
   margin: 0 auto .55rem;
-  color: #7439e6;
+  color: #2563eb;
   background: #f7f1ff;
   border-radius: 12px;
   place-items: center;
@@ -2043,9 +2043,9 @@ body#sss_body #language-switcher > li > ul.pure-menu-children a:focus-visible {
 body #footer,
 body .cliptoid-site-footer {
   color: #211334;
-  background: #fc00ff;
-  background: -webkit-linear-gradient(left, #00dbde, #fc00ff);
-  background: linear-gradient(to right, #00dbde, #fc00ff);
+  background: #635BFF;
+  background: -webkit-linear-gradient(left, #00dbde, #635BFF);
+  background: linear-gradient(to right, #00dbde, #635BFF);
 }
 
 body #footer a,
@@ -2222,7 +2222,7 @@ body#sss_body .pure-button-primary,
 body#sss_body .cliptoid-feature-icon,
 body:not(#sss_body) .cliptoid-site-header__brand,
 body:not(#sss_body) .cliptoid-site-footer__brand {
-  background-color: #fc00ff;
+  background-color: #635BFF;
 }
 
 body#sss_body #splash {
@@ -2379,9 +2379,9 @@ body#sss_body .pure-button-primary,
 body#sss_body .cliptoid-feature-icon,
 body:not(#sss_body) .cliptoid-site-header__brand,
 body:not(#sss_body) .cliptoid-site-footer__brand {
-  background: #fc00ff;
-  background: -webkit-linear-gradient(left, #00dbde, #fc00ff);
-  background: linear-gradient(to right, #00dbde, #fc00ff);
+  background: #635BFF;
+  background: -webkit-linear-gradient(left, #00dbde, #635BFF);
+  background: linear-gradient(to right, #00dbde, #635BFF);
 }
 
 body#sss_body #twt_promo_image {
@@ -2486,9 +2486,9 @@ body#sss_body #twt_promo_image > .cliptide-install-status {
 body#sss_body #footer,
 body:not(#sss_body) .cliptoid-site-footer {
   color: #211334;
-  background: #fc00ff;
-  background: -webkit-linear-gradient(left, #00dbde, #fc00ff);
-  background: linear-gradient(to right, #00dbde, #fc00ff);
+  background: #635BFF;
+  background: -webkit-linear-gradient(left, #00dbde, #635BFF);
+  background: linear-gradient(to right, #00dbde, #635BFF);
 }
 
 body#sss_body #footer a,
@@ -2710,7 +2710,7 @@ body#sss_body #twt_promo_image .download_with_app_header span {
 
 body#sss_body #submit {
   color: #fff !important;
-  background: linear-gradient(to right, #00dbde, #fc00ff) !important;
+  background: linear-gradient(to right, #00dbde, #635BFF) !important;
   border: 2px solid #fff !important;
   border-radius: 12px;
   outline: none;
@@ -2719,7 +2719,7 @@ body#sss_body #submit {
 }
 
 body#sss_body #submit:hover:not(:disabled) {
-  background: linear-gradient(to right, #00dbde, #fc00ff) !important;
+  background: linear-gradient(to right, #00dbde, #635BFF) !important;
   box-shadow: 0 10px 24px rgba(35, 16, 71, .36);
 }
 
@@ -3020,8 +3020,8 @@ body#sss_body #cliptoid-home-howto .cliptoid-step p {
 :root {
   --cliptoid-ink: #172033;
   --cliptoid-muted: #526176;
-  --cliptoid-blue: #0084ff;
-  --cliptoid-blue-dark: #1d4ed8;
+  --cliptoid-blue: #2563eb;
+  --cliptoid-blue-dark: #2563eb;
   --cliptoid-border: #e1e7ef;
   --cliptoid-page: #f6f8fb;
   --cliptoid-surface: #fff;

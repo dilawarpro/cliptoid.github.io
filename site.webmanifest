@@ -7,7 +7,7 @@
   "scope": "/",
   "display": "standalone",
   "background_color": "#f7f5fc",
-  "theme_color": "#fc00ff",
+  "theme_color": "#635BFF",
   "icons": [
     {
       "src": "/images/cliptide-192.png",

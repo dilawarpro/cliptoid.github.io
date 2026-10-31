@@ -21,6 +21,10 @@ body {
   max-width: 100%;
 }
 
+.splash-container{
+   background: var(--cliptoid-gradient) !important;
+}
+
 #splash #bigmessage {
   max-width: 18ch;
   margin: .15em auto .5em;
@@ -29,6 +33,7 @@ body {
   line-height: 1.08;
   overflow-wrap: anywhere;
   text-wrap: balance;
+  color: white !important;
 }
 
 #splash .cliptoid-caption-intro {

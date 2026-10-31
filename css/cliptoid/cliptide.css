@@ -3020,7 +3020,7 @@ body#sss_body #cliptoid-home-howto .cliptoid-step p {
 :root {
   --cliptoid-ink: #172033;
   --cliptoid-muted: #526176;
-  --cliptoid-blue: linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%)
+  --cliptoid-blue: #0084ff;
   --cliptoid-blue-dark: #1d4ed8;
   --cliptoid-border: #e1e7ef;
   --cliptoid-page: #f6f8fb;

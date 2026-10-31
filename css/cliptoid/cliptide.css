@@ -2432,6 +2432,7 @@ body#sss_body #twt_promo_image > .cliptide-install-status {
 
   body#sss_body #twt_promo_image {
     position: relative;
+    margin-left: 30px;
   }
 
   body#sss_body #twt_promo_image > .cliptide-install-status {
@@ -3419,13 +3420,13 @@ body#sss_body #footer .language-flag-icon {
 @media (max-width: 480px) {
   body#sss_body .menu-wrapper {
     gap: .35rem;
+    margin-left: 5px;
   }
 
  @media (max-width: 480px) {
     body#sss_body .menu-wrapper > .pure-menu-heading .sss div {
         margin-right: -25px;
         margin-left: -10px;
-        color: #2563eb;
     }
 }
 

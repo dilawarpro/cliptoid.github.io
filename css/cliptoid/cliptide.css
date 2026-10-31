@@ -3421,9 +3421,13 @@ body#sss_body #footer .language-flag-icon {
     gap: .35rem;
   }
 
-  body#sss_body .menu-wrapper > .pure-menu-heading .sss div {
-    display: none;
-  }
+ @media (max-width: 480px) {
+    body#sss_body .menu-wrapper > .pure-menu-heading .sss div {
+        margin-right: -25px;
+        margin-left: -10px;
+        color: #2563eb;
+    }
+}
 
   body#sss_body .menu-wrapper > .flex-1 {
     flex: 0 0 125px;

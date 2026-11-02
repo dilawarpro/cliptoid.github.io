@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Cliptoid - TikTok Downloader",
   "short_name": "Cliptoid",
-  "description": "Save public TikTok videos, audio, captions and slideshow images.",
+  "description": "Save TikTok videos, audio, captions and slideshow images.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

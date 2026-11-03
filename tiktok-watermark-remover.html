@@ -161,7 +161,7 @@
 <ul class="wr-regions" id="wr-regions" aria-label="Watermark boxes"></ul>
 
 <div class="wr-row">
-<button type="button" class="wr-btn" id="wr-run">Remove again with these boxes</button>
+  <button type="button" class="wr-btn" id="wr-run">Remove watermark</button>
 <button type="button" class="wr-btn is-ghost" id="wr-cancel" hidden>Cancel</button>
 </div>
 <progress class="wr-progress" id="wr-progress" max="1" value="0" hidden></progress>
@@ -563,6 +563,9 @@
     var cx = c.getContext('2d', { willReadFrequently: true });
     var step = Math.max(0.4, dur / 60), times = [], t, S = [], f, i, k, x, y;
     for (t = 0.15; t < dur - 0.1; t += step) times.push(t);
+    for (t = Math.max(0.15, dur - 1.5); t < dur; t += 0.2) times.push(t);
+    times.push(Math.max(0, dur - 0.05));
+    times = Array.from(new Set(times)).sort(function (a, b) { return a - b; });
     if (times.length < 4) { preparing = false; return []; }
 
     for (f = 0; f < times.length; f++) {
@@ -668,8 +671,7 @@
       say('Watermark found in ' + found.length + ' spot' + (found.length > 1 ? 's' : '') + '. Removing it now...');
     } else {
       regions = []; addPreset();
-      say('The watermark could not be located automatically, so standard corner boxes were used. Check the preview, adjust the boxes if needed, then select Remove watermark.', true);
-      return;
+      say('The watermark was not clearly detected. Trying common corner positions automatically; inspect the result before downloading.');
     }
     await process();
   }

@@ -299,16 +299,63 @@
   var GAP = 0.3;        /* seconds before/after a box window used as clean reference */
 
   var regions = [], dur = 0, srcUrl = null, outUrl = null;
-  var recording = false, cancelled = false, recorder = null;
+  var recording = false, cancelled = false, recorder = null, preparing = false;
   var ac = null, srcNode = null, dest = null;
   var drawing = false, p0 = null, p1 = null;
 
   function say(msg, isErr) { statusEl.textContent = msg || ''; statusEl.className = 'wr-status' + (isErr ? ' is-error' : ''); }
   function fmt(t) { return (t || 0).toFixed(1) + ' s'; }
+  function noop() {}
+  function clamp(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+  function round1(v) { return Math.round(v * 10) / 10; }
+  function ceil1(v) { return Math.ceil(v * 10 - 1e-6) / 10; }
+  function withTimeout(p, ms) { return Promise.race([p, new Promise(function (r) { setTimeout(r, ms); })]); }
+
+  /* ---------- audio / playback unlock (must run inside a tap or click when possible) ---------- */
+  function initAudio() {
+    if (ac) return;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      ac = new AC();
+      srcNode = ac.createMediaElementSource(vid);
+      dest = ac.createMediaStreamDestination();
+      srcNode.connect(dest);
+    } catch (err) { dest = null; }
+  }
+  function unlockAudio() {
+    initAudio();
+    try { if (ac && ac.state === 'suspended') { var p = ac.resume(); if (p && p.catch) p.catch(noop); } } catch (e) {}
+  }
+  function unlockPlay() {
+    if (recording || preparing || !vid.videoWidth) return;
+    try { var p = vid.play(); if (p && p.catch) p.catch(noop); vid.pause(); } catch (e) {}
+  }
+
+  /* ---------- seeking (waits until the new frame is really available) ---------- */
+  function frameReady() {
+    return new Promise(function (res) {
+      var finished = false, tm;
+      function fin() { if (finished) return; finished = true; clearTimeout(tm); res(); }
+      tm = setTimeout(fin, vid.requestVideoFrameCallback ? 80 : 50);
+      if (vid.requestVideoFrameCallback) { try { vid.requestVideoFrameCallback(fin); } catch (e) {} }
+    });
+  }
+  function seekTo(t) {
+    return new Promise(function (res) {
+      if (!vid.seeking && Math.abs(vid.currentTime - t) < 0.002) { res(); return; }
+      var tm = setTimeout(done, 4000);
+      function done() { clearTimeout(tm); vid.removeEventListener('seeked', done); frameReady().then(res); }
+      vid.addEventListener('seeked', done);
+      if (Math.abs(vid.currentTime - t) >= 0.002) vid.currentTime = t;
+    });
+  }
 
   /* ---------- loading ---------- */
   function loadFile(file) {
-    if (!file || recording) return;
+    if (!file) return;
+    if (recording || preparing) { say('Please wait until the current step finishes.', true); return; }
     if (file.type && file.type.indexOf('video/') !== 0) { say('Please choose a video file.', true); return; }
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (outUrl) { URL.revokeObjectURL(outUrl); outUrl = null; }
@@ -318,6 +365,7 @@
   }
   vid.addEventListener('loadedmetadata', function () {
     if (!vid.videoWidth) { say('This video could not be read. Try an MP4 file.', true); return; }
+    if (!isFinite(vid.duration) || vid.duration <= 0) { say('This video has no readable length. Try an MP4 file.', true); return; }
     work.width = stage.width = vid.videoWidth;
     work.height = stage.height = vid.videoHeight;
     dur = vid.duration || 0;
@@ -331,7 +379,8 @@
   vid.addEventListener('seeked', function () { if (!recording && !preparing) refresh(); });
   vid.addEventListener('loadeddata', function () { if (!recording && !preparing) refresh(); });
 
-  fileIn.addEventListener('change', function () { loadFile(fileIn.files[0]); });
+  drop.addEventListener('click', unlockAudio);
+  fileIn.addEventListener('change', function () { loadFile(fileIn.files[0]); fileIn.value = ''; });
   ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('is-over'); }); });
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('is-over'); }); });
   drop.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]); });
@@ -340,7 +389,7 @@
   function addPreset() {
     var W = work.width, H = work.height, half = Math.round(dur * 5) / 10;
     regions.push({ x: Math.round(W * 0.03), y: Math.round(H * 0.05), w: Math.round(W * 0.32), h: Math.round(H * 0.08), from: 0, to: half });
-    regions.push({ x: Math.round(W * 0.62), y: Math.round(H * 0.80), w: Math.round(W * 0.35), h: Math.round(H * 0.09), from: half, to: Math.round(dur * 10) / 10 });
+    regions.push({ x: Math.round(W * 0.62), y: Math.round(H * 0.80), w: Math.round(W * 0.35), h: Math.round(H * 0.09), from: half, to: ceil1(dur) });
     renderList(); refresh();
   }
   function renderList() {
@@ -364,33 +413,51 @@
   $('wr-clear').addEventListener('click', function () { regions = []; renderList(); refresh(); });
 
   /* ---------- reconstruction engine ---------- */
+  /* Box plus a feather margin. Sides clipped by the frame edge get margin 0 (no feathering there). */
   function area(r) {
     var W = work.width, H = work.height;
-    var ax = Math.max(0, Math.round(r.x) - M), ay = Math.max(0, Math.round(r.y) - M);
-    var bx = Math.min(W, Math.round(r.x + r.w) + M), by = Math.min(H, Math.round(r.y + r.h) + M);
-    return { x: ax, y: ay, w: Math.max(2, bx - ax), h: Math.max(2, by - ay) };
+    var x0 = Math.round(r.x), y0 = Math.round(r.y), x1 = Math.round(r.x + r.w), y1 = Math.round(r.y + r.h);
+    var ax = Math.max(0, x0 - M), ay = Math.max(0, y0 - M), bx = Math.min(W, x1 + M), by = Math.min(H, y1 + M);
+    var a = { x: ax, y: ay, w: Math.max(2, bx - ax), h: Math.max(2, by - ay) };
+    a.ml = x0 - ax >= 2 ? x0 - ax : 0;
+    a.mt = y0 - ay >= 2 ? y0 - ay : 0;
+    a.mr = bx - x1 >= 2 ? bx - x1 : 0;
+    a.mb = by - y1 >= 2 ? by - y1 : 0;
+    return a;
   }
-  /* mean colour difference (cur - ref) along the outer band of the area */
-  function bandOffset(cur, ref, a) {
-    var sr = 0, sg = 0, sb = 0, n = 0, i, j, k;
+  function inBand(a, i, j) {
+    return (a.ml && i < 2) || (a.mr && i >= a.w - 2) || (a.mt && j < 2) || (a.mb && j >= a.h - 2);
+  }
+  /* mean colour difference (cur - ref) and remaining error, measured on the outer band of the area */
+  function bandMatch(cur, ref, a) {
+    var sr = 0, sg = 0, sb = 0, n = 0, i, j, k, off, e = 0;
     for (j = 0; j < a.h; j++) {
       for (i = 0; i < a.w; i++) {
-        if (Math.min(i, j, a.w - 1 - i, a.h - 1 - j) > 1) continue;
+        if (!inBand(a, i, j)) continue;
         k = (j * a.w + i) * 4;
         sr += cur[k] - ref[k]; sg += cur[k + 1] - ref[k + 1]; sb += cur[k + 2] - ref[k + 2]; n++;
       }
     }
-    return n ? [sr / n, sg / n, sb / n] : [0, 0, 0];
-  }
-  function clamp(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
-
-  /* paste a patch (Uint8ClampedArray, area-sized) with colour match and feathered edges */
-  function paste(a, curImg, patches, weights, offsets) {
-    var cd = curImg.data, i, j, k, c, d, alpha, v, p;
+    if (!n) return { off: [0, 0, 0], err: 0, n: 0 };
+    off = [sr / n, sg / n, sb / n];
     for (j = 0; j < a.h; j++) {
       for (i = 0; i < a.w; i++) {
-        d = Math.min(i, j, a.w - 1 - i, a.h - 1 - j);
-        alpha = d >= M - 1 ? 1 : (d + 1) / M;
+        if (!inBand(a, i, j)) continue;
+        k = (j * a.w + i) * 4;
+        e += Math.abs(cur[k] - ref[k] - off[0]) + Math.abs(cur[k + 1] - ref[k + 1] - off[1]) + Math.abs(cur[k + 2] - ref[k + 2] - off[2]);
+      }
+    }
+    return { off: off, err: e / (n * 3), n: n };
+  }
+
+  /* paste patches (area-sized pixel arrays) with colour match and feathered edges */
+  function paste(a, curImg, patches, weights, offsets) {
+    var cd = curImg.data, i, j, k, c, alpha, v, p, al, ar, at, ab;
+    for (j = 0; j < a.h; j++) {
+      at = a.mt ? (j + 1) / a.mt : 1; ab = a.mb ? (a.h - j) / a.mb : 1;
+      for (i = 0; i < a.w; i++) {
+        al = a.ml ? (i + 1) / a.ml : 1; ar = a.mr ? (a.w - i) / a.mr : 1;
+        alpha = Math.min(1, al, ar, at, ab);
         k = (j * a.w + i) * 4;
         for (c = 0; c < 3; c++) {
           v = 0;
@@ -402,68 +469,71 @@
     wctx.putImageData(curImg, a.x, a.y);
   }
 
+  /* smooth fill: continues the surrounding colours inward (used when no good source exists) */
+  function spatialPatch(a, cur) {
+    var out = new Uint8ClampedArray(a.w * a.h * 4), i, j, k, c, sw, sv, wt, dd;
+    for (j = 0; j < a.h; j++) {
+      for (i = 0; i < a.w; i++) {
+        k = (j * a.w + i) * 4;
+        for (c = 0; c < 3; c++) {
+          sw = 0; sv = 0;
+          if (a.ml) { dd = Math.max(1, i - a.ml + 1); wt = 1 / (dd * dd); sv += cur[(j * a.w + a.ml - 1) * 4 + c] * wt; sw += wt; }
+          if (a.mr) { dd = Math.max(1, (a.w - a.mr) - i); wt = 1 / (dd * dd); sv += cur[(j * a.w + a.w - a.mr) * 4 + c] * wt; sw += wt; }
+          if (a.mt) { dd = Math.max(1, j - a.mt + 1); wt = 1 / (dd * dd); sv += cur[((a.mt - 1) * a.w + i) * 4 + c] * wt; sw += wt; }
+          if (a.mb) { dd = Math.max(1, (a.h - a.mb) - j); wt = 1 / (dd * dd); sv += cur[((a.h - a.mb) * a.w + i) * 4 + c] * wt; sw += wt; }
+          out[k + c] = sw ? sv / sw : cur[k + c];
+        }
+        out[k + 3] = 255;
+      }
+    }
+    return out;
+  }
+
   /* Method 1: copy real pixels from a moment when the watermark is not over this spot */
   function fromOtherFrames(r, a, cur, t) {
-    var refs = r.refs, patches = [], weights = [], offsets = [], p;
+    var refs = r.refs, patches = [], weights, offsets = [], err = 0, p, m, w, trust;
     if (refs.length === 2) {
-      var w = Math.min(1, Math.max(0, (t - r.from) / Math.max(0.05, r.to - r.from)));
+      w = clamp01((t - r.from) / Math.max(0.05, r.to - r.from));
       weights = [1 - w, w];
     } else { weights = [1]; }
     for (p = 0; p < refs.length; p++) {
-      patches.push(refs[p].data.data);
-      offsets.push(bandOffset(cur.data, refs[p].data.data, a));
+      m = bandMatch(cur.data, refs[p].data.data, a);
+      patches.push(refs[p].data.data); offsets.push(m.off); err += weights[p] * m.err;
+    }
+    /* if the borrowed picture no longer matches the surroundings (camera or subject moved), lean on a smooth fill */
+    trust = err <= 9 ? 1 : err >= 24 ? 0 : (24 - err) / 15;
+    r.tr = (r.tr == null) ? trust : r.tr * 0.8 + trust * 0.2;
+    if (r.tr < 0.98) {
+      var tr = r.tr;
+      weights = weights.map(function (x) { return x * tr; });
+      weights.push(1 - tr); patches.push(spatialPatch(a, cur.data)); offsets.push([0, 0, 0]);
     }
     paste(a, cur, patches, weights, offsets);
   }
 
   /* Method 2: no clean moment exists, so copy the best-matching texture from the same frame */
-  function chooseSource(r, a, cur) {
-    var W = work.width, H = work.height, best = null, bestScore = Infinity, s, o, i, j, k, d, sc, cand, dx, dy;
-    var offs = [];
-    [1, 1.4, 2, 3].forEach(function (m) {
-      offs.push([0, -Math.round(a.h * m)], [0, Math.round(a.h * m)], [-Math.round(a.w * m), 0], [Math.round(a.w * m), 0]);
-      offs.push([-Math.round(a.w * m * 0.7), -Math.round(a.h * m)], [Math.round(a.w * m * 0.7), -Math.round(a.h * m)]);
+  function chooseSource(a, cur) {
+    var W = work.width, H = work.height, best = null, bestErr = Infinity, offs = [], o, dx, dy, cand, m;
+    [1, 1.4, 2, 3].forEach(function (k) {
+      offs.push([0, -Math.round(a.h * k)], [0, Math.round(a.h * k)], [-Math.round(a.w * k), 0], [Math.round(a.w * k), 0]);
+      offs.push([-Math.round(a.w * k * 0.7), -Math.round(a.h * k)], [Math.round(a.w * k * 0.7), -Math.round(a.h * k)]);
     });
     for (o = 0; o < offs.length; o++) {
       dx = offs[o][0]; dy = offs[o][1];
       if (a.x + dx < 0 || a.y + dy < 0 || a.x + dx + a.w > W || a.y + dy + a.h > H) continue;
       cand = wctx.getImageData(a.x + dx, a.y + dy, a.w, a.h).data;
-      sc = 0;
-      for (j = 0; j < a.h; j++) {
-        for (i = 0; i < a.w; i++) {
-          d = Math.min(i, j, a.w - 1 - i, a.h - 1 - j);
-          if (d > 1) continue;
-          k = (j * a.w + i) * 4;
-          sc += Math.abs(cur[k] - cand[k]) + Math.abs(cur[k + 1] - cand[k + 1]) + Math.abs(cur[k + 2] - cand[k + 2]);
-        }
-      }
-      if (sc < bestScore) { bestScore = sc; best = { dx: dx, dy: dy }; }
+      m = bandMatch(cur, cand, a);
+      if (m.n && m.err < bestErr) { bestErr = m.err; best = { dx: dx, dy: dy }; }
     }
-    return best;
+    return best && bestErr < 30 ? best : null;
   }
   function fromNearbyTexture(r, a, cur) {
-    if (!r.src) r.src = chooseSource(r, a, cur.data) || { none: true };
-    if (r.src.none) { edgeFill(a, cur); return; }
+    if (!r.src) r.src = chooseSource(a, cur.data) || { none: true };
+    if (r.src.none) { paste(a, cur, [spatialPatch(a, cur.data)], [1], [[0, 0, 0]]); return; }
     var cand = wctx.getImageData(a.x + r.src.dx, a.y + r.src.dy, a.w, a.h).data;
-    paste(a, cur, [cand], [1], [bandOffset(cur.data, cand, a)]);
-  }
-  /* last resort when no source block fits: continue the surrounding colours inward */
-  function edgeFill(a, cur) {
-    var d = cur.data, i, j, k, c, sw, sv, wt, e;
-    for (j = M; j < a.h - M; j++) {
-      for (i = M; i < a.w - M; i++) {
-        k = (j * a.w + i) * 4;
-        for (c = 0; c < 3; c++) {
-          sw = 0; sv = 0;
-          e = (j * a.w + (M - 1)) * 4; wt = 1 / Math.pow(i - M + 1, 2); sv += d[e + c] * wt; sw += wt;
-          e = (j * a.w + (a.w - M)) * 4; wt = 1 / Math.pow(a.w - M - i, 2); sv += d[e + c] * wt; sw += wt;
-          e = ((M - 1) * a.w + i) * 4; wt = 1 / Math.pow(j - M + 1, 2); sv += d[e + c] * wt; sw += wt;
-          e = ((a.h - M) * a.w + i) * 4; wt = 1 / Math.pow(a.h - M - j, 2); sv += d[e + c] * wt; sw += wt;
-          d[k + c] = sv / sw;
-        }
-      }
-    }
-    wctx.putImageData(cur, a.x, a.y);
+    var m = bandMatch(cur.data, cand, a);
+    if (m.err > 24) paste(a, cur, [spatialPatch(a, cur.data)], [1], [[0, 0, 0]]);
+    else paste(a, cur, [cand], [1], [m.off]);
   }
 
   function applyRegion(r, t) {
@@ -475,37 +545,28 @@
     if (!vid.videoWidth) return;
     wctx.drawImage(vid, 0, 0, work.width, work.height);
     for (var i = 0; i < regions.length; i++) {
-      if (t >= regions[i].from && t <= regions[i].to) applyRegion(regions[i], t);
+      if (t >= regions[i].from - 0.05 && t <= regions[i].to + 0.05) applyRegion(regions[i], t);
     }
   }
 
   /* grab clean reference patches from just before and after each box window */
-  var preparing = false;
-  function seekTo(t) {
-    return new Promise(function (res) {
-      if (Math.abs(vid.currentTime - t) < 0.002) return res();
-      var done = function () { clearTimeout(tm); vid.removeEventListener('seeked', done); res(); };
-      var tm = setTimeout(done, 4000);
-      vid.addEventListener('seeked', done);
-      vid.currentTime = t;
-    });
-  }
   async function prepare() {
     preparing = true;
-    for (var n = 0; n < regions.length; n++) {
-      var r = regions[n], a = area(r), cands = [];
-      r.refs = []; r.src = null;
-      if (r.from - GAP >= 0) cands.push(r.from - GAP);
-      if (r.to + GAP <= dur - 0.05) cands.push(r.to + GAP);
-      for (var q = 0; q < cands.length; q++) {
-        await seekTo(cands[q]);
-        wctx.drawImage(vid, 0, 0, work.width, work.height);
-        r.refs.push({ t: cands[q], data: wctx.getImageData(a.x, a.y, a.w, a.h) });
+    try {
+      for (var n = 0; n < regions.length; n++) {
+        var r = regions[n], a = area(r), cands = [];
+        r.refs = []; r.src = null; r.tr = null;
+        if (r.from - GAP >= 0) cands.push(r.from - GAP);
+        if (r.to + GAP <= dur - 0.05) cands.push(r.to + GAP);
+        for (var q = 0; q < cands.length; q++) {
+          await seekTo(cands[q]);
+          wctx.drawImage(vid, 0, 0, work.width, work.height);
+          r.refs.push({ t: cands[q], data: wctx.getImageData(a.x, a.y, a.w, a.h) });
+        }
+        /* with two references the blend runs from the "before" patch to the "after" patch */
+        r.refs.sort(function (u, v) { return u.t - v.t; });
       }
-      /* with two references the blend runs from the "before" patch to the "after" patch */
-      r.refs.sort(function (u, v) { return u.t - v.t; });
-    }
-    preparing = false;
+    } finally { preparing = false; }
   }
 
   /* ---------- preview (boxes only; removal is built on export) ---------- */
@@ -544,7 +605,7 @@
     drawing = false;
     var x = Math.min(p0.x, p1.x), y = Math.min(p0.y, p1.y), w = Math.abs(p1.x - p0.x), h = Math.abs(p1.y - p0.y);
     if (w > work.width * 0.02 && h > work.height * 0.01) {
-      regions.push({ x: Math.max(0, x), y: Math.max(0, y), w: Math.min(w, work.width - x), h: Math.min(h, work.height - y), from: 0, to: Math.round(dur * 10) / 10 });
+      regions.push({ x: Math.max(0, x), y: Math.max(0, y), w: Math.min(w, work.width - x), h: Math.min(h, work.height - y), from: 0, to: ceil1(dur) });
       renderList();
     }
     p0 = p1 = null; refresh();
@@ -554,117 +615,137 @@
 
   /* ---------- automatic watermark detection ---------- */
   /* Looks for small white, text-like overlays that switch on and off over time
-     (the way the TikTok logo and username jump between positions). */
+     (the way the TikTok logo and username jump between positions).
+     Frames are sampled once; the analysis then runs strict -> relaxed until something is found. */
   async function detect() {
     preparing = true;
-    var sw = 270, sh = Math.max(40, Math.round(sw * work.height / work.width)), T = 6;
-    var cols = Math.floor(sw / T), rows = Math.floor(sh / T), n = cols * rows;
-    var c = document.createElement('canvas'); c.width = sw; c.height = sh;
-    var cx = c.getContext('2d', { willReadFrequently: true });
-    var step = Math.max(0.4, dur / 60), times = [], t, S = [], f, i, k, x, y;
-    for (t = 0.15; t < dur - 0.1; t += step) times.push(t);
-    for (t = Math.max(0.15, dur - 1.5); t < dur; t += 0.2) times.push(t);
-    times.push(Math.max(0, dur - 0.05));
-    times = Array.from(new Set(times)).sort(function (a, b) { return a - b; });
-    if (times.length < 4) { preparing = false; return []; }
+    try {
+      var sw = 360, sh = Math.max(40, Math.round(sw * work.height / work.width));
+      var T = 6, cols = Math.floor(sw / T), rows = Math.floor(sh / T), n = cols * rows;
+      var sx = work.width / sw, sy = work.height / sh;
+      var cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
+      var cx = cv.getContext('2d', { willReadFrequently: true });
+      var step = Math.min(0.8, Math.max(0.2, dur / 70)), times = [], t, f, i, k, x, y;
+      for (t = 0.1; t < dur - 0.1; t += step) times.push(t);
+      times.push(Math.max(0, dur - 0.1));
+      times = Array.from(new Set(times)).sort(function (a, b) { return a - b; });
+      if (times.length < 4) return [];
 
-    for (f = 0; f < times.length; f++) {
-      await seekTo(times[f]);
-      cx.drawImage(vid, 0, 0, sw, sh);
-      var d = cx.getImageData(0, 0, sw, sh).data;
-      var L = new Float32Array(sw * sh), Sat = new Uint8Array(sw * sh);
-      for (i = 0; i < sw * sh; i++) {
-        var r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
-        L[i] = 0.299 * r + 0.587 * g + 0.114 * b;
-        Sat[i] = Math.max(r, g, b) - Math.min(r, g, b);
-      }
-      var tile = new Float32Array(n);
-      for (y = 2; y < sh - 2; y++) {
-        for (x = 2; x < sw - 2; x++) {
-          i = y * sw + x;
-          if (L[i] < 185 || Sat[i] > 40) continue;
-          var edge = L[i] - 45;
-          if (L[i - 2] < edge || L[i + 2] < edge || L[i - 2 * sw] < edge || L[i + 2 * sw] < edge) {
-            var ty = Math.floor(y / T), tx = Math.floor(x / T);
-            if (ty < rows && tx < cols) tile[ty * cols + tx] += 1;
+      var px = sw * sh, L = new Float32Array(px), SAT = new Uint8Array(px), SS = [], SW = [];
+      for (f = 0; f < times.length; f++) {
+        await seekTo(times[f]);
+        cx.drawImage(vid, 0, 0, sw, sh);
+        var d = cx.getImageData(0, 0, sw, sh).data;
+        for (i = 0; i < px; i++) {
+          var r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+          L[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+          SAT[i] = Math.max(r, g, b) - Math.min(r, g, b);
+        }
+        var ts = new Float32Array(n), tw = new Float32Array(n);
+        for (y = 2; y < sh - 2; y++) {
+          var ty = Math.floor(y / T);
+          if (ty >= rows) break;
+          for (x = 2; x < sw - 2; x++) {
+            i = y * sw + x;
+            if (L[i] < 140 || SAT[i] > 85) continue;
+            var con = L[i] - Math.min(L[i - 2], L[i + 2], L[i - 2 * sw], L[i + 2 * sw]);
+            if (con < 30) continue;
+            var tx = Math.floor(x / T);
+            if (tx >= cols) continue;
+            tw[ty * cols + tx] += 1;                                              /* relaxed feature */
+            if (L[i] >= 175 && SAT[i] <= 45 && con >= 45) ts[ty * cols + tx] += 1; /* strict feature */
           }
         }
+        for (k = 0; k < n; k++) { ts[k] /= (T * T); tw[k] /= (T * T); }
+        SS.push(ts); SW.push(tw);
+        say('Looking for the watermark... ' + Math.round(((f + 1) / times.length) * 100) + '%');
       }
-      for (k = 0; k < n; k++) tile[k] /= (T * T);
-      S.push(tile);
-      say('Looking for the watermark... ' + Math.round(((f + 1) / times.length) * 100) + '%');
-    }
 
-    function stats(series) {
-      var s = series.slice().sort(function (a, b) { return a - b; });
-      var q = Math.max(1, Math.floor(s.length * 0.25)), lo = 0, hi = 0, j;
-      for (j = 0; j < q; j++) { lo += s[j]; hi += s[s.length - 1 - j]; }
-      return { lo: lo / q, hi: hi / q };
-    }
-    /* tiles that switch between "text-like white overlay" and "nothing" */
-    var cand = new Uint8Array(n);
-    for (k = 0; k < n; k++) {
-      var ser = S.map(function (row) { return row[k]; }), st = stats(ser);
-      if (st.hi >= 0.10 && st.hi - st.lo >= 0.07 && st.hi >= st.lo * 2) cand[k] = 1;
-    }
-    /* group nearby candidate tiles */
-    var seen = new Uint8Array(n), groups = [];
-    for (k = 0; k < n; k++) {
-      if (!cand[k] || seen[k]) continue;
-      var stack = [k], tiles = []; seen[k] = 1;
-      while (stack.length) {
-        var cur = stack.pop(); tiles.push(cur);
-        var cy = Math.floor(cur / cols), cxx = cur % cols;
-        for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) {
-          var ny = cy + dy, nx = cxx + dx;
-          if (ny < 0 || nx < 0 || ny >= rows || nx >= cols) continue;
-          var nk = ny * cols + nx;
-          if (cand[nk] && !seen[nk]) { seen[nk] = 1; stack.push(nk); }
-        }
-      }
-      groups.push(tiles);
-    }
-    var found = [], scale = work.width / (cols * T);
-    groups.forEach(function (tiles) {
-      var minX = 1e9, minY = 1e9, maxX = -1, maxY = -1;
-      tiles.forEach(function (q) {
-        var ty = Math.floor(q / cols), tx = q % cols;
-        minX = Math.min(minX, tx); maxX = Math.max(maxX, tx); minY = Math.min(minY, ty); maxY = Math.max(maxY, ty);
-      });
-      var wT = (maxX - minX + 1), hT = (maxY - minY + 1);
-      if (wT < cols * 0.08 || wT > cols * 0.48 || hT > rows * 0.14 || tiles.length < 4) return;
-      var series = S.map(function (row) { var s = 0; tiles.forEach(function (q) { s += row[q]; }); return s / tiles.length; });
-      var st = stats(series), thr = (st.hi + st.lo) / 2, on = series.map(function (v) { return v >= thr; });
-      for (i = 1; i < on.length - 1; i++) { if (!on[i] && on[i - 1] && on[i + 1]) on[i] = true; }
-      var run = -1, wins = [];
-      for (i = 0; i <= on.length; i++) {
-        if (i < on.length && on[i]) { if (run < 0) run = i; }
-        else if (run >= 0) { if (i - run >= 2) wins.push([run, i - 1]); run = -1; }
-      }
-      var pad = work.width * 0.012;
-      var box = {
-        x: Math.max(0, minX * T * scale - pad), y: Math.max(0, minY * T * scale - pad),
-        w: Math.min(work.width, wT * T * scale + pad * 2), h: Math.min(work.height, hT * T * scale + pad * 2)
+      var stats = function (series) {
+        var s = series.slice().sort(function (a, b) { return a - b; });
+        var q = Math.max(1, Math.floor(s.length * 0.25)), lo = 0, hi = 0, j;
+        for (j = 0; j < q; j++) { lo += s[j]; hi += s[s.length - 1 - j]; }
+        return { lo: lo / q, hi: hi / q };
       };
-      wins.forEach(function (w) {
-        found.push({
-          x: box.x, y: box.y, w: box.w, h: box.h,
-          from: Math.max(0, Math.round((times[w[0]] - step * 0.6) * 10) / 10),
-          to: Math.min(dur, Math.round((times[w[1]] + step * 0.6) * 10) / 10),
-          score: st.hi - st.lo
+
+      var analyze = function (S, P) {
+        var cand = new Uint8Array(n), seen = new Uint8Array(n), groups = [], found = [], kk, j, ser, st;
+        for (kk = 0; kk < n; kk++) {
+          ser = [];
+          for (j = 0; j < S.length; j++) ser.push(S[j][kk]);
+          st = stats(ser);
+          if (st.hi >= P.hi && st.hi - st.lo >= P.diff && st.hi >= st.lo * P.ratio) cand[kk] = 1;
+        }
+        for (kk = 0; kk < n; kk++) {
+          if (!cand[kk] || seen[kk]) continue;
+          var stack = [kk], tiles = []; seen[kk] = 1;
+          while (stack.length) {
+            var cur = stack.pop(); tiles.push(cur);
+            var cy = Math.floor(cur / cols), cxx = cur % cols;
+            for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) {
+              var ny = cy + dy, nx = cxx + dx;
+              if (ny < 0 || nx < 0 || ny >= rows || nx >= cols) continue;
+              var nk = ny * cols + nx;
+              if (cand[nk] && !seen[nk]) { seen[nk] = 1; stack.push(nk); }
+            }
+          }
+          groups.push(tiles);
+        }
+        groups.forEach(function (tiles) {
+          var minX = 1e9, minY = 1e9, maxX = -1, maxY = -1;
+          tiles.forEach(function (q) {
+            var qy = Math.floor(q / cols), qx = q % cols;
+            minX = Math.min(minX, qx); maxX = Math.max(maxX, qx); minY = Math.min(minY, qy); maxY = Math.max(maxY, qy);
+          });
+          var wT = maxX - minX + 1, hT = maxY - minY + 1;
+          if (tiles.length < 4 || wT < cols * 0.07 || wT > cols * 0.6 || hT > rows * 0.2) return;
+          var series = S.map(function (row) { var s = 0; tiles.forEach(function (q) { s += row[q]; }); return s / tiles.length; });
+          var gs = stats(series), thr = (gs.hi + gs.lo) / 2;
+          var on = series.map(function (v) { return v >= thr; });
+          var jj, run = -1, wins = [], onN = 0;
+          for (jj = 1; jj < on.length - 1; jj++) { if (!on[jj] && on[jj - 1] && on[jj + 1]) on[jj] = true; }
+          for (jj = 0; jj < on.length; jj++) { if (on[jj]) onN++; }
+          if (onN / on.length > 0.92) return;               /* always on: not a switching overlay */
+          for (jj = 0; jj <= on.length; jj++) {
+            if (jj < on.length && on[jj]) { if (run < 0) run = jj; }
+            else if (run >= 0) { if (jj - run >= 2) wins.push([run, jj - 1]); run = -1; }
+          }
+          if (!wins.length) return;
+          var pad = T * sx * 1.2;
+          var x0 = Math.max(0, minX * T * sx - pad), y0 = Math.max(0, minY * T * sy - pad);
+          var x1 = Math.min(work.width, (maxX + 1) * T * sx + pad), y1 = Math.min(work.height, (maxY + 1) * T * sy + pad);
+          wins.forEach(function (w) {
+            found.push({
+              x: x0, y: y0, w: x1 - x0, h: y1 - y0,
+              from: Math.max(0, round1(times[w[0]] - step * 0.6)),
+              to: Math.min(ceil1(dur), ceil1(times[w[1]] + step * 0.6)),
+              score: gs.hi - gs.lo
+            });
+          });
         });
-      });
-    });
-    found.sort(function (a, b) { return b.score - a.score; });
-    preparing = false;
-    return found.slice(0, 6);
+        found.sort(function (a, b) { return b.score - a.score; });
+        return found;
+      };
+
+      var passes = [
+        { S: SS, hi: 0.08, diff: 0.06,  ratio: 2 },
+        { S: SW, hi: 0.12, diff: 0.08,  ratio: 2 },
+        { S: SW, hi: 0.07, diff: 0.045, ratio: 2.5 }
+      ];
+      for (var pi = 0; pi < passes.length; pi++) {
+        var res = analyze(passes[pi].S, passes[pi]);
+        if (res.length) { console.info('[watermark] detected on pass ' + (pi + 1), res); return res.slice(0, 8); }
+      }
+      console.info('[watermark] nothing detected, using corner preset');
+      return [];
+    } finally { preparing = false; }
   }
 
   async function autoRun() {
     if (recording || preparing) return;
     runBtn.disabled = true;
     var found = [];
-    try { found = await detect(); } catch (err) { found = []; preparing = false; }
+    try { found = await detect(); } catch (err) { console.error('[watermark] detection failed', err); found = []; preparing = false; }
     runBtn.disabled = false;
     if (found.length) {
       regions = found; renderList(); refresh();
@@ -673,7 +754,12 @@
       regions = []; addPreset();
       say('The watermark was not clearly detected. Trying common corner positions automatically; inspect the result before downloading.');
     }
-    await process();
+    try { await process(); }
+    catch (err) {
+      console.error('[watermark] processing failed', err);
+      preparing = false; setBusy(false);
+      say('Something went wrong while removing the watermark. Select Remove watermark to try again.', true);
+    }
   }
 
   /* ---------- export ---------- */
@@ -699,20 +785,22 @@
 
     vid.pause(); runBtn.disabled = true;
     say('Reading clean pixels from other moments in the video...');
-    await prepare();
+    try { await prepare(); }
+    catch (err) {
+      console.error('[watermark] prepare failed', err);
+      runBtn.disabled = false; say('Could not read the video frames. Try another file or browser.', true); return;
+    }
     runBtn.disabled = false;
 
+    var useAudio = false;
     try {
-      if (!ac) {
-        var AC = window.AudioContext || window.webkitAudioContext;
-        ac = new AC(); srcNode = ac.createMediaElementSource(vid);
-        dest = ac.createMediaStreamDestination(); srcNode.connect(dest);
-      }
-      if (ac.state === 'suspended') await ac.resume();
-    } catch (err) { dest = null; }
+      initAudio();
+      if (ac && ac.state === 'suspended') await withTimeout(ac.resume(), 1000);
+      useAudio = !!(ac && dest && ac.state === 'running');
+    } catch (err) { useAudio = false; }
 
     var stream = outCanvas.captureStream(30);
-    if (dest) dest.stream.getAudioTracks().forEach(function (tr) { stream.addTrack(tr); });
+    if (useAudio) dest.stream.getAudioTracks().forEach(function (tr) { stream.addTrack(tr); });
     var chunks = [];
     try {
       var opts = { videoBitsPerSecond: Math.min(12e6, Math.max(3e6, W * H * 4)) };
@@ -725,37 +813,66 @@
       if (cancelled) { say('Cancelled.'); vid.currentTime = 0; refresh(); return; }
       var type = recorder.mimeType || mime || 'video/webm';
       var blob = new Blob(chunks, { type: type });
+      if (!blob.size) { say('The browser produced an empty file. Please try again or use another browser.', true); return; }
       if (outUrl) URL.revokeObjectURL(outUrl);
       outUrl = URL.createObjectURL(blob);
       outVid.src = outUrl; dl.href = outUrl;
       dl.download = 'tiktok-watermark-removed.' + (type.indexOf('mp4') > -1 ? 'mp4' : 'webm');
       result.hidden = false;
-      say('Done. Check every moment of the result, then download it.');
+      say('Done. Check every moment of the result, then download it.' + (useAudio ? '' : ' No audio was captured; select Remove watermark to run again with sound.'));
       vid.currentTime = 0;
     };
 
     await seekTo(0);
     cancelled = false; result.hidden = true; prog.value = 0;
+    renderFrame(0); octx.drawImage(work, 0, 0, W, H, 0, 0, W, H);   /* first frame is ready before recording starts */
     setBusy(true);
     say('Rebuilding frames in real time. Keep this tab open until it finishes.');
-    recorder.start(250);
+    try { recorder.start(250); }
+    catch (err) { setBusy(false); say('Recording could not start in this browser.', true); return; }
 
-    function tick() {
-      if (!recording) return;
-      var t = vid.currentTime;
+    var finished = false;
+    function finish() {
+      if (finished) return; finished = true;
+      vid.pause();
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+    }
+    function tick(now, meta) {
+      if (!recording || finished) return;
+      var t = (meta && typeof meta.mediaTime === 'number') ? meta.mediaTime : vid.currentTime;
       renderFrame(t);
       octx.drawImage(work, 0, 0, W, H, 0, 0, W, H);
       prog.value = Math.min(1, t / Math.max(0.5, dur));
       if (vid.ended || t >= dur - 0.03) { finish(); return; }
       next();
     }
-    function next() { if (vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(tick); else requestAnimationFrame(tick); }
-    function finish() { vid.pause(); if (recorder && recorder.state !== 'inactive') recorder.stop(); }
+    function next() {
+      var fired = false, id;
+      function go(now, meta) { if (fired) return; fired = true; clearTimeout(id); tick(now, meta); }
+      if (vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(go); else requestAnimationFrame(go);
+      id = setTimeout(go, 120);   /* safety net so the export can never stall on a missing callback */
+    }
     vid.onended = function () { if (recording) finish(); };
-    try { await vid.play(); } catch (err) { cancelled = true; finish(); say('Your browser needs a tap to start playback. Select Remove watermark to continue.', true); return; }
+    try { await vid.play(); }
+    catch (err) {
+      recorder.onstop = null;
+      try { if (recorder.state !== 'inactive') recorder.stop(); } catch (e) {}
+      setBusy(false);
+      vid.currentTime = 0; refresh();
+      say('Your browser needs a tap to start playback. Select Remove watermark to continue.', true);
+      return;
+    }
     next();
   }
-  runBtn.addEventListener('click', process);
+
+  runBtn.addEventListener('click', function () {
+    unlockAudio(); unlockPlay();     /* runs inside the tap so Safari/iOS allow playback and audio */
+    process().catch(function (err) {
+      console.error('[watermark] processing failed', err);
+      preparing = false; setBusy(false);
+      say('Something went wrong while removing the watermark. Please try again.', true);
+    });
+  });
   cancelBtn.addEventListener('click', function () {
     cancelled = true; vid.pause();
     if (recorder && recorder.state !== 'inactive') recorder.stop();

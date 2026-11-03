@@ -1,4 +1,11 @@
 (function () {
+  const favicon = document.createElement("link");
+  favicon.rel = "icon";
+  favicon.type = "image/svg+xml";
+  favicon.sizes = "any";
+  favicon.href = "/images/logosmall.svg";
+  document.head.append(favicon);
+
   const languages = {
     en: { name: "English" },
     ar: { name: "Arabic" },

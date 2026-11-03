@@ -94,7 +94,7 @@
     { "@type": "Organization", "@id": "https://cliptoid.com/#organization", "name": "Cliptoid", "url": "https://cliptoid.com/", "logo": "https://cliptoid.com/images/cliptide-app.svg" },
     { "@type": "WebSite", "@id": "https://cliptoid.com/#website", "name": "Cliptoid", "url": "https://cliptoid.com/", "publisher": { "@id": "https://cliptoid.com/#organization" }, "inLanguage": "en" },
     { "@type": "WebPage", "@id": "https://cliptoid.com/tiktok-watermark-remover.html#webpage", "name": "TikTok Watermark Remover: Remove Watermark Online Free", "url": "https://cliptoid.com/tiktok-watermark-remover.html", "isPartOf": { "@id": "https://cliptoid.com/#website" }, "about": { "@id": "https://cliptoid.com/tiktok-watermark-remover.html#webapplication" }, "description": "Free TikTok watermark remover that runs in your browser. Upload a video, mark the logo, and save a clean copy.", "inLanguage": "en", "breadcrumb": { "@id": "https://cliptoid.com/tiktok-watermark-remover.html#breadcrumb" } },
-    { "@type": "WebApplication", "@id": "https://cliptoid.com/tiktok-watermark-remover.html#webapplication", "name": "Cliptoid TikTok Watermark Remover", "url": "https://cliptoid.com/tiktok-watermark-remover.html", "applicationCategory": "MultimediaApplication", "operatingSystem": "Any", "isAccessibleForFree": true, "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }, "provider": { "@id": "https://cliptoid.com/#organization" }, "description": "A browser-based tool that lets you mark a watermark area on a video you upload, then fill, blur, crop, or trim it and save a new copy. Files are processed on your device.", "featureList": ["Upload a video from your device", "Draw boxes over the watermark with start and end times", "Smart fill, blur, crop, and end-card trim", "Save the result as MP4 or WebM, depending on browser support"] },
+    { "@type": "WebApplication", "@id": "https://cliptoid.com/tiktok-watermark-remover.html#webapplication", "name": "Cliptoid TikTok Watermark Remover", "url": "https://cliptoid.com/tiktok-watermark-remover.html", "applicationCategory": "MultimediaApplication", "operatingSystem": "Any", "isAccessibleForFree": true, "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }, "provider": { "@id": "https://cliptoid.com/#organization" }, "description": "A browser-based tool that lets you mark a watermark area on a video you upload and rebuilds the covered pixels from other moments in the clip, then saves a new copy. Files are processed on your device.", "featureList": ["Upload a video from your device", "Draw boxes over the watermark with start and end times", "Rebuilds the covered pixels from other moments in the video", "Save the result as MP4 or WebM, depending on browser support"] },
     { "@type": "BreadcrumbList", "@id": "https://cliptoid.com/tiktok-watermark-remover.html#breadcrumb", "itemListElement": [
       { "@type": "ListItem", "position": 1, "name": "TikTok Downloader", "item": "https://cliptoid.com/" },
       { "@type": "ListItem", "position": 2, "name": "TikTok Watermark Remover", "item": "https://cliptoid.com/tiktok-watermark-remover.html" }
@@ -145,7 +145,7 @@
 <div class="wr-editor" id="wr-editor" hidden>
 <div class="wr-stage-wrap"><canvas class="wr-stage" id="wr-stage" width="640" height="360" aria-label="Video preview. Drag to draw a box over the watermark."></canvas></div>
 <video class="wr-vid" id="wr-video" playsinline preload="auto"></video>
-<p class="wr-hint">Drag on the preview to draw a box over each watermark. Use the slider to check different moments of the video, because the TikTok watermark moves.</p>
+<p class="wr-hint">Drag on the preview to draw a box over each watermark, then set the seconds when it is visible there. The TikTok watermark moves, so use the slider to find when it changes position. The preview shows your boxes; the removal is built when you select Remove watermark.</p>
 
 <div class="wr-row">
 <label for="wr-seek">Preview time</label>
@@ -156,25 +156,9 @@
 <div class="wr-row">
 <button type="button" class="wr-btn is-ghost is-small" id="wr-preset">Add two corner boxes</button>
 <button type="button" class="wr-btn is-ghost is-small" id="wr-clear">Clear boxes</button>
-<label for="wr-mode">Removal method</label>
-<select id="wr-mode">
-<option value="fill">Smart fill</option>
-<option value="blur">Blur</option>
-</select>
+
 </div>
 <ul class="wr-regions" id="wr-regions" aria-label="Watermark boxes"></ul>
-
-<div class="wr-row">
-<label for="wr-crop-top">Crop %</label>
-<label>Top <input type="number" id="wr-crop-top" min="0" max="40" step="1" value="0"></label>
-<label>Bottom <input type="number" id="wr-crop-bottom" min="0" max="40" step="1" value="0"></label>
-<label>Left <input type="number" id="wr-crop-left" min="0" max="40" step="1" value="0"></label>
-<label>Right <input type="number" id="wr-crop-right" min="0" max="40" step="1" value="0"></label>
-</div>
-<div class="wr-row">
-<label for="wr-trim">Trim end card (seconds)</label>
-<input type="number" id="wr-trim" min="0" max="10" step="0.1" value="0">
-</div>
 
 <div class="wr-row">
 <button type="button" class="wr-btn" id="wr-run">Remove watermark</button>
@@ -197,7 +181,7 @@
 <div class="main-highlights" style="max-width: 900px; margin: 0 auto;">
 <div class="responsive"><div class="content is-center"><p class="text-color--main u-bigger-text">Private</p><div>Your video is processed on your device and is not sent to our servers.</div></div></div>
 <div class="responsive"><div class="content is-center"><p class="text-color--main u-bigger-text">Free</p><div>No account, no credits, and no watermark added by Cliptoid.</div></div></div>
-<div class="responsive"><div class="content is-center"><p class="text-color--main u-bigger-text">Full control</p><div>Choose where and when the watermark is hidden, frame by frame.</div></div></div>
+<div class="responsive"><div class="content is-center"><p class="text-color--main u-bigger-text">Full control</p><div>Mark where and when the watermark appears so each spot can be rebuilt.</div></div></div>
 </div>
 </section>
 
@@ -208,41 +192,35 @@
 </div>
 <div class="cliptoid-steps" aria-label="Three steps to remove a TikTok watermark">
 <article class="cliptoid-step"><span class="cliptoid-step__visual" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M24 34V12m0 0-8 8m8-8 8 8"></path><path d="M9 29v8a4 4 0 0 0 4 4h22a4 4 0 0 0 4-4v-8"></path></svg><span class="cliptoid-step__number">1</span></span><h3>Upload your video</h3><p>Select the TikTok video from your phone, tablet, or computer, or drop it into the box above.</p></article>
-<article class="cliptoid-step"><span class="cliptoid-step__visual" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="10" y="12" width="28" height="24" rx="3"></rect><path d="M16 20h10v8H16z"></path></svg><span class="cliptoid-step__number">2</span></span><h3>Mark the watermark</h3><p>Drag a box over each watermark position. Set when each box is active, then pick fill or blur.</p></article>
+<article class="cliptoid-step"><span class="cliptoid-step__visual" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="10" y="12" width="28" height="24" rx="3"></rect><path d="M16 20h10v8H16z"></path></svg><span class="cliptoid-step__number">2</span></span><h3>Mark the watermark</h3><p>Drag a box over each watermark position. Set the seconds when it is visible in that spot.</p></article>
 <article class="cliptoid-step"><span class="cliptoid-step__visual" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M24 6v25m0 0 9-9m-9 9-9-9"></path><path d="M9 29v8a4 4 0 0 0 4 4h22a4 4 0 0 0 4-4v-8"></path></svg><span class="cliptoid-step__number">3</span></span><h3>Process and save</h3><p>Select Remove watermark, wait while the clip plays through once, then download the new file.</p></article>
 </div>
 </section>
 
 <section class="cliptide-guide" aria-labelledby="cliptide-guide-title">
 <h2 id="cliptide-guide-title">How this TikTok watermark remover works</h2>
-<p>TikTok adds a logo and username to videos saved with its built-in download option. The mark is part of the picture, so it cannot be switched off like a layer. A watermark remover has to repaint, blur, or cut away those pixels. This tool gives you four ways to do that and lets you combine them.</p>
+<p>TikTok burns its logo and username into the picture, so the mark is not a layer you can switch off. To remove it, a tool has to put back the pixels the watermark covers. This tool does not blur or cut the area. It rebuilds it using real picture information from the same video.</p>
 
-<h3>Smart fill</h3>
-<p>Smart fill rebuilds each marked box from the pixels around its edges, blending them toward the centre. It works best when the background behind the watermark is a plain wall, sky, or soft gradient. On busy detail such as text or patterned clothing, you may see a smudge.</p>
+<h3>Rebuilding from other moments in the video</h3>
+<p>The TikTok watermark moves around the frame. That means the spot it covers now was usually clear a moment earlier or later. For each box, the tool reads a clean patch from just before and just after the time the watermark is there, matches its brightness and colour to the surrounding picture, and blends it in with soft edges. When the camera is steady, this restores the actual background.</p>
 
-<h3>Blur</h3>
-<p>Blur softens the marked area into a low-detail patch. It is quicker to read as intentional than a smeared fill, and it is a reasonable choice when the watermark sits over a complex background.</p>
-
-<h3>Crop</h3>
-<p>Cropping removes a strip from the top, bottom, left, or right. It is the cleanest option when the mark sits near an edge, because nothing has to be guessed. The trade-off is a smaller frame, so keep an eye on faces and captions.</p>
-
-<h3>Trim end card</h3>
-<p>Many saved TikToks finish with a short end card showing the logo and username. Enter the number of seconds to cut and the new file stops before it.</p>
+<h3>Rebuilding from nearby texture</h3>
+<p>If a box covers the whole video, there is no clean moment to borrow from. In that case the tool searches the same frame for the closest-matching patch of picture, copies it over the watermark, and blends the edges. This works best on repeating or even textures such as walls, grass, or fabric.</p>
 
 <div class="wr-table-wrap">
 <table class="wr-table">
-<thead><tr><th>Method</th><th>Best for</th><th>Trade-off</th></tr></thead>
+<thead><tr><th>Situation</th><th>What the tool uses</th><th>Likely result</th></tr></thead>
 <tbody>
-<tr><td>Smart fill</td><td>Watermarks over plain or smooth backgrounds</td><td>Can smudge on detailed areas</td></tr>
-<tr><td>Blur</td><td>Watermarks over busy backgrounds</td><td>The blurred patch is visible</td></tr>
-<tr><td>Crop</td><td>Marks close to an edge</td><td>Loses part of the frame</td></tr>
-<tr><td>Trim end card</td><td>The closing logo screen</td><td>Shortens the video</td></tr>
+<tr><td>Steady camera, watermark changes position</td><td>Clean pixels from other moments</td><td>Usually clean</td></tr>
+<tr><td>Moving camera or fast action behind the mark</td><td>Clean pixels from other moments</td><td>Possible ghosting or a slight jump</td></tr>
+<tr><td>Watermark stays in one spot the whole clip</td><td>Matching texture from the same frame</td><td>Good on plain or repeating areas, visible on fine detail</td></tr>
+<tr><td>Full-screen logo end card</td><td>Not supported</td><td>Nothing behind it to rebuild</td></tr>
 </tbody>
 </table>
 </div>
 
 <h2>Removing a watermark that moves</h2>
-<p>The TikTok watermark does not stay in one place. It changes position during the clip, so a single box leaves the mark visible for part of the video. Use <strong>Add two corner boxes</strong> to place a starting pair, drag them onto the logo and username, and then set the start and end seconds for each box. Scrub the preview slider to find the moments when the mark jumps, and use those times as your boundaries. The preset positions are only a starting point, because the exact placement can differ between videos and app versions.</p>
+<p>The TikTok watermark does not stay in one place. It changes position during the clip, so a single box leaves the mark visible for part of the video. Use <strong>Add two corner boxes</strong> to place a starting pair, drag them onto the logo and username, and then set the start and end seconds for each box. Scrub the preview slider to find the moments when the mark jumps, and use those times as your boundaries. Give each window a little extra time on both sides so the soft edges of the mark are covered. The preset positions are only a starting point, because the exact placement can differ between videos and app versions.</p>
 
 <h2>A cleaner alternative: download the video without a watermark</h2>
 <p>Removing a watermark always means altering pixels. If the video is on TikTok and you are allowed to save it, you may get a better result by never adding the watermark in the first place. Paste the post link into the <a href="/index.html">Cliptoid TikTok video downloader</a> and choose the MP4 option when it is returned. You can also use the <a href="/download-tiktok-mp3.html">TikTok MP3 downloader</a> for audio, the <a href="/tiktok-caption.html">TikTok caption copier</a> for text, and the <a href="/download-tiktok-stories.html">slideshow and image guide</a> for photo posts. The downloader depends on what each link returns, so availability can vary.</p>
@@ -257,16 +235,16 @@
 
 <h2>Tips for a cleaner result</h2>
 <ul>
-<li>Draw the box slightly larger than the logo and username so the soft edges are covered.</li>
-<li>Keep boxes as small as you can. A smaller fill area is harder to notice.</li>
-<li>Preview several moments of the video. Check the first second, the middle, and the end.</li>
-<li>Use a short end-card trim instead of painting over the closing logo.</li>
-<li>Stay on the page until processing finishes. Switching tabs can pause the preview that drives the export.</li>
+<li>Draw each box slightly larger than the logo and username so the soft edges are covered.</li>
+<li>Keep boxes as small as you can. Less area to rebuild means fewer visible traces.</li>
+<li>Set the visible-from and visible-to seconds carefully, because the tool borrows clean pixels from just outside each window.</li>
+<li>Videos shot on a steady camera give the best results.</li>
+<li>Stay on the page until processing finishes. Switching tabs can pause the export.</li>
 <li>Start from the highest-quality file you have. Repeated re-saving lowers quality.</li>
 </ul>
 
 <h2>What this tool cannot do</h2>
-<p>This is a repaint, blur, crop, and trim tool, not an AI object-removal service, and results depend on the video. Smart fill cannot recover what was hidden behind the watermark, so it estimates from nearby pixels. The clip is processed in real time, so a 30 second video takes about 30 seconds. The tool records a new file, which means a small quality change is possible. The saved format is MP4 when your browser can record it and WebM otherwise; browser support for recording is described on <a href="https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder" rel="noopener" target="_blank">MDN's MediaRecorder reference</a>. Very large files, or older phones, may struggle.</p>
+<p>No tool can recover pixels that were never recorded, so every removal is a reconstruction. Results depend on the video: they are best with a steady camera and a watermark that changes position, and weaker on moving shots and detailed backgrounds. The full-screen end card cannot be rebuilt. The clip is processed in real time, so a 30 second video takes about 30 seconds, and the new file is re-recorded, which can slightly change quality. The saved format is MP4 when your browser can record it and WebM otherwise; browser support for recording is described on <a href="https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder" rel="noopener" target="_blank">MDN's MediaRecorder reference</a>. Very large files, or older phones, may struggle.</p>
 
 <h2>Is it okay to remove a TikTok watermark?</h2>
 <p>A watermark identifies the creator and the platform. Removing it from your own video, for example to repost your clip on another platform, is a common and reasonable use. Removing it from someone else's video and posting it as your own can violate copyright, the creator's rights, and platform rules. Get permission before you reuse other people's content, credit the creator where appropriate, and follow the terms of the platform where you publish. Cliptoid is an independent tool and is not affiliated with TikTok, ByteDance, or Douyin. This page is general information, not legal advice.</p>
@@ -275,13 +253,13 @@
 <p>The video you select stays in your browser. It is read from your device, processed on your device, and saved back to your device. Cliptoid does not upload the file to a server for this tool. Closing the tab discards the result, so download it before you leave.</p>
 
 <h2>TikTok watermark remover FAQ</h2>
-<details><summary>What is a TikTok watermark remover?</summary><p>It is a tool that hides or removes the TikTok logo and username that appear on videos saved from the app. It does this by filling, blurring, cropping, or trimming the marked area.</p></details>
-<details><summary>How do I remove the TikTok watermark from a video?</summary><p>Upload the video, draw a box over each watermark position, choose smart fill or blur, set when each box is active, select Remove watermark, and download the new file.</p></details>
+<details><summary>What is a TikTok watermark remover?</summary><p>It is a tool that hides or removes the TikTok logo and username that appear on videos saved from the app. This tool does it by rebuilding the covered area from other moments in the video or from nearby texture.</p></details>
+<details><summary>How do I remove the TikTok watermark from a video?</summary><p>Upload the video, draw a box over each watermark position, set the seconds when each one is visible, select Remove watermark, and download the new file.</p></details>
 <details><summary>Is this TikTok watermark remover free?</summary><p>Yes. There is no account, no payment, and no limit on the number of videos you process.</p></details>
 <details><summary>Do I need to sign up or install an app?</summary><p>No. It runs in a current browser on iPhone, Android, Windows, and Mac. No extension or app is needed.</p></details>
 <details><summary>Is my video uploaded to your servers?</summary><p>No. The video is processed in your browser on your own device for this tool.</p></details>
-<details><summary>Why does the watermark still show in part of my video?</summary><p>The watermark moves during the clip. Add a box for each position and set the start and end seconds so every moment is covered. Also check the end card and trim it if needed.</p></details>
-<details><summary>Will the quality drop after removing the watermark?</summary><p>The tool records a new copy of the video, so a small change in quality is possible. Filled or blurred areas will also look different from the original pixels.</p></details>
+<details><summary>Why does the watermark still show in part of my video?</summary><p>The watermark moves during the clip. Add a box for each position and set the start and end seconds so every moment is covered. The full-screen end card at the end of a saved TikTok cannot be rebuilt.</p></details>
+<details><summary>Will the quality drop after removing the watermark?</summary><p>The tool records a new copy of the video, so a small change in quality is possible. Rebuilt areas can also differ slightly from the original picture, especially when the camera moves.</p></details>
 <details><summary>Can I remove the watermark from a TikTok slideshow or photo?</summary><p>This tool is built for video files. For photo posts, see the <a href="/download-tiktok-stories.html">TikTok slideshow and image guide</a>, which explains how to save available images from a post link.</p></details>
 <details><summary>What is the difference between removing a watermark and downloading without one?</summary><p>Removing a watermark edits a video that already has one. Downloading without a watermark gets a version that never had it, using a post link in the <a href="/index.html">TikTok video downloader</a>, when available. The second option usually keeps better quality.</p></details>
 <details><summary>Is it legal to remove a TikTok watermark?</summary><p>It depends on whose video it is and how you use it. Editing your own clip is generally fine. Reposting someone else's work without permission can infringe their rights. Check applicable law and platform terms.</p></details>
@@ -308,14 +286,13 @@
   var $ = function (id) { return document.getElementById(id); };
   var drop = $('wr-drop'), fileIn = $('wr-file'), editor = $('wr-editor'), stage = $('wr-stage'),
       sctx = stage.getContext('2d'), vid = $('wr-video'), seek = $('wr-seek'), timeLbl = $('wr-time'),
-      list = $('wr-regions'), modeSel = $('wr-mode'), trimEnd = $('wr-trim'), runBtn = $('wr-run'),
-      cancelBtn = $('wr-cancel'), prog = $('wr-progress'), statusEl = $('wr-status'), result = $('wr-result'),
-      outVid = $('wr-out'), dl = $('wr-download'),
-      crop = { t: $('wr-crop-top'), b: $('wr-crop-bottom'), l: $('wr-crop-left'), r: $('wr-crop-right') };
+      list = $('wr-regions'), runBtn = $('wr-run'), cancelBtn = $('wr-cancel'), prog = $('wr-progress'),
+      statusEl = $('wr-status'), result = $('wr-result'), outVid = $('wr-out'), dl = $('wr-download');
 
   var work = document.createElement('canvas');
   var wctx = work.getContext('2d', { willReadFrequently: true });
-  var tmp = document.createElement('canvas'), tctx = tmp.getContext('2d');
+  var M = 4;            /* feather margin around each box, in pixels */
+  var GAP = 0.3;        /* seconds before/after a box window used as clean reference */
 
   var regions = [], dur = 0, srcUrl = null, outUrl = null;
   var recording = false, cancelled = false, recorder = null;
@@ -327,15 +304,13 @@
 
   /* ---------- loading ---------- */
   function loadFile(file) {
-    if (!file) return;
+    if (!file || recording) return;
     if (file.type && file.type.indexOf('video/') !== 0) { say('Please choose a video file.', true); return; }
-    if (recording) return;
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (outUrl) { URL.revokeObjectURL(outUrl); outUrl = null; }
     result.hidden = true; prog.hidden = true; say('Loading video...');
     srcUrl = URL.createObjectURL(file);
-    vid.src = srcUrl;
-    vid.load();
+    vid.src = srcUrl; vid.load();
   }
   vid.addEventListener('loadedmetadata', function () {
     if (!vid.videoWidth) { say('This video could not be read. Try an MP4 file.', true); return; }
@@ -343,50 +318,37 @@
     work.height = stage.height = vid.videoHeight;
     dur = vid.duration || 0;
     seek.max = dur; seek.value = 0; timeLbl.textContent = fmt(0);
-    regions = [];
-    editor.hidden = false;
-    addPreset();
+    regions = []; editor.hidden = false; addPreset();
     vid.currentTime = Math.min(0.1, dur / 2);
-    say('Video loaded. Draw boxes over the watermark, then select Remove watermark.');
+    say('Video loaded. Place a box on each watermark and set when each one is visible.');
   });
   vid.addEventListener('error', function () { if (!recording) say('This video format is not supported by your browser.', true); });
-  vid.addEventListener('seeked', function () { if (!recording) refresh(); });
-  vid.addEventListener('loadeddata', function () { if (!recording) refresh(); });
+  vid.addEventListener('seeked', function () { if (!recording && !preparing) refresh(); });
+  vid.addEventListener('loadeddata', function () { if (!recording && !preparing) refresh(); });
 
   fileIn.addEventListener('change', function () { loadFile(fileIn.files[0]); });
   ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('is-over'); }); });
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('is-over'); }); });
   drop.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]); });
 
-  /* ---------- crop + regions ---------- */
-  function cropRect() {
-    var W = work.width, H = work.height;
-    var v = function (el) { return Math.min(40, Math.max(0, parseFloat(el.value) || 0)); };
-    var x = Math.round(W * v(crop.l) / 100), y = Math.round(H * v(crop.t) / 100);
-    var w = W - x - Math.round(W * v(crop.r) / 100), h = H - y - Math.round(H * v(crop.b) / 100);
-    w = Math.max(2, w - (w % 2)); h = Math.max(2, h - (h % 2));
-    return { x: x, y: y, w: w, h: h };
-  }
-
+  /* ---------- boxes ---------- */
   function addPreset() {
     var W = work.width, H = work.height, half = Math.round(dur * 5) / 10;
     regions.push({ x: Math.round(W * 0.03), y: Math.round(H * 0.05), w: Math.round(W * 0.32), h: Math.round(H * 0.08), from: 0, to: half });
     regions.push({ x: Math.round(W * 0.62), y: Math.round(H * 0.80), w: Math.round(W * 0.35), h: Math.round(H * 0.09), from: half, to: Math.round(dur * 10) / 10 });
     renderList(); refresh();
   }
-
   function renderList() {
     list.innerHTML = '';
     regions.forEach(function (r, i) {
       var li = document.createElement('li');
       li.innerHTML = '<b>Box ' + (i + 1) + '</b>' +
-        '<label>From <input type="number" min="0" step="0.1" value="' + r.from + '" data-i="' + i + '" data-k="from"> s</label>' +
-        '<label>To <input type="number" min="0" step="0.1" value="' + r.to + '" data-i="' + i + '" data-k="to"> s</label>';
+        '<label>Watermark visible from <input type="number" min="0" step="0.1" value="' + r.from + '" data-i="' + i + '" data-k="from"> s</label>' +
+        '<label>to <input type="number" min="0" step="0.1" value="' + r.to + '" data-i="' + i + '" data-k="to"> s</label>';
       var del = document.createElement('button');
       del.type = 'button'; del.className = 'wr-btn is-ghost is-small'; del.textContent = 'Remove box';
       del.addEventListener('click', function () { regions.splice(i, 1); renderList(); refresh(); });
-      li.appendChild(del);
-      list.appendChild(li);
+      li.appendChild(del); list.appendChild(li);
     });
   }
   list.addEventListener('input', function (e) {
@@ -395,80 +357,157 @@
   });
   $('wr-preset').addEventListener('click', addPreset);
   $('wr-clear').addEventListener('click', function () { regions = []; renderList(); refresh(); });
-  [modeSel, crop.t, crop.b, crop.l, crop.r].forEach(function (el) { el.addEventListener('input', refresh); });
 
-  /* ---------- removal ---------- */
-  function applyRegion(r) {
+  /* ---------- reconstruction engine ---------- */
+  function area(r) {
     var W = work.width, H = work.height;
-    var x = Math.max(0, Math.round(r.x)), y = Math.max(0, Math.round(r.y));
-    var w = Math.min(W - x, Math.round(r.w)), h = Math.min(H - y, Math.round(r.h));
-    if (w < 2 || h < 2) return;
-    if (modeSel.value === 'blur') { pixelBlur(x, y, w, h); } else { smartFill(x, y, w, h); }
+    var ax = Math.max(0, Math.round(r.x) - M), ay = Math.max(0, Math.round(r.y) - M);
+    var bx = Math.min(W, Math.round(r.x + r.w) + M), by = Math.min(H, Math.round(r.y + r.h) + M);
+    return { x: ax, y: ay, w: Math.max(2, bx - ax), h: Math.max(2, by - ay) };
   }
-
-  function pixelBlur(x, y, w, h) {
-    var tw = Math.max(1, Math.round(w / 9)), th = Math.max(1, Math.round(h / 9));
-    tmp.width = tw; tmp.height = th;
-    tctx.imageSmoothingEnabled = true;
-    tctx.drawImage(work, x, y, w, h, 0, 0, tw, th);
-    wctx.imageSmoothingEnabled = true;
-    wctx.drawImage(tmp, 0, 0, tw, th, x, y, w, h);
-  }
-
-  function smartFill(x, y, w, h) {
-    var W = work.width, H = work.height;
-    var bx = Math.max(x - 1, 0), by = Math.max(y - 1, 0);
-    var bw = Math.min(x + w + 1, W) - bx, bh = Math.min(y + h + 1, H) - by;
-    var img = wctx.getImageData(bx, by, bw, bh), d = img.data;
-    var ix = x - bx, iy = y - by;
-    var hasL = ix > 0, hasT = iy > 0, hasR = (ix + w) < bw, hasB = (iy + h) < bh;
-    if (!(hasL || hasT || hasR || hasB)) { pixelBlur(x, y, w, h); return; }
-    for (var j = 0; j < h; j++) {
-      for (var i = 0; i < w; i++) {
-        var sr = 0, sg = 0, sb = 0, sw = 0, k, wt;
-        if (hasL) { k = ((iy + j) * bw + (ix - 1)) * 4; wt = 1 / ((i + 1) * (i + 1)); sr += d[k] * wt; sg += d[k + 1] * wt; sb += d[k + 2] * wt; sw += wt; }
-        if (hasR) { k = ((iy + j) * bw + (ix + w)) * 4; wt = 1 / ((w - i) * (w - i)); sr += d[k] * wt; sg += d[k + 1] * wt; sb += d[k + 2] * wt; sw += wt; }
-        if (hasT) { k = ((iy - 1) * bw + (ix + i)) * 4; wt = 1 / ((j + 1) * (j + 1)); sr += d[k] * wt; sg += d[k + 1] * wt; sb += d[k + 2] * wt; sw += wt; }
-        if (hasB) { k = ((iy + h) * bw + (ix + i)) * 4; wt = 1 / ((h - j) * (h - j)); sr += d[k] * wt; sg += d[k + 1] * wt; sb += d[k + 2] * wt; sw += wt; }
-        k = ((iy + j) * bw + (ix + i)) * 4;
-        d[k] = sr / sw; d[k + 1] = sg / sw; d[k + 2] = sb / sw; d[k + 3] = 255;
+  /* mean colour difference (cur - ref) along the outer band of the area */
+  function bandOffset(cur, ref, a) {
+    var sr = 0, sg = 0, sb = 0, n = 0, i, j, k;
+    for (j = 0; j < a.h; j++) {
+      for (i = 0; i < a.w; i++) {
+        if (Math.min(i, j, a.w - 1 - i, a.h - 1 - j) > 1) continue;
+        k = (j * a.w + i) * 4;
+        sr += cur[k] - ref[k]; sg += cur[k + 1] - ref[k + 1]; sb += cur[k + 2] - ref[k + 2]; n++;
       }
     }
-    wctx.putImageData(img, bx, by);
-    if (w > 6 && h > 6) { pixelBlurSoft(x, y, w, h); }
+    return n ? [sr / n, sg / n, sb / n] : [0, 0, 0];
   }
-  function pixelBlurSoft(x, y, w, h) {
-    var tw = Math.max(1, Math.round(w / 3)), th = Math.max(1, Math.round(h / 3));
-    tmp.width = tw; tmp.height = th;
-    tctx.imageSmoothingEnabled = true;
-    tctx.drawImage(work, x, y, w, h, 0, 0, tw, th);
-    wctx.imageSmoothingEnabled = true;
-    wctx.drawImage(tmp, 0, 0, tw, th, x, y, w, h);
+  function clamp(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+  /* paste a patch (Uint8ClampedArray, area-sized) with colour match and feathered edges */
+  function paste(a, curImg, patches, weights, offsets) {
+    var cd = curImg.data, i, j, k, c, d, alpha, v, p;
+    for (j = 0; j < a.h; j++) {
+      for (i = 0; i < a.w; i++) {
+        d = Math.min(i, j, a.w - 1 - i, a.h - 1 - j);
+        alpha = d >= M - 1 ? 1 : (d + 1) / M;
+        k = (j * a.w + i) * 4;
+        for (c = 0; c < 3; c++) {
+          v = 0;
+          for (p = 0; p < patches.length; p++) v += weights[p] * (patches[p][k + c] + offsets[p][c]);
+          cd[k + c] = clamp(cd[k + c] * (1 - alpha) + v * alpha);
+        }
+      }
+    }
+    wctx.putImageData(curImg, a.x, a.y);
   }
 
+  /* Method 1: copy real pixels from a moment when the watermark is not over this spot */
+  function fromOtherFrames(r, a, cur, t) {
+    var refs = r.refs, patches = [], weights = [], offsets = [], p;
+    if (refs.length === 2) {
+      var w = Math.min(1, Math.max(0, (t - r.from) / Math.max(0.05, r.to - r.from)));
+      weights = [1 - w, w];
+    } else { weights = [1]; }
+    for (p = 0; p < refs.length; p++) {
+      patches.push(refs[p].data.data);
+      offsets.push(bandOffset(cur.data, refs[p].data.data, a));
+    }
+    paste(a, cur, patches, weights, offsets);
+  }
+
+  /* Method 2: no clean moment exists, so copy the best-matching texture from the same frame */
+  function chooseSource(r, a, cur) {
+    var W = work.width, H = work.height, best = null, bestScore = Infinity, s, o, i, j, k, d, sc, cand, dx, dy;
+    var offs = [];
+    [1, 1.4, 2, 3].forEach(function (m) {
+      offs.push([0, -Math.round(a.h * m)], [0, Math.round(a.h * m)], [-Math.round(a.w * m), 0], [Math.round(a.w * m), 0]);
+      offs.push([-Math.round(a.w * m * 0.7), -Math.round(a.h * m)], [Math.round(a.w * m * 0.7), -Math.round(a.h * m)]);
+    });
+    for (o = 0; o < offs.length; o++) {
+      dx = offs[o][0]; dy = offs[o][1];
+      if (a.x + dx < 0 || a.y + dy < 0 || a.x + dx + a.w > W || a.y + dy + a.h > H) continue;
+      cand = wctx.getImageData(a.x + dx, a.y + dy, a.w, a.h).data;
+      sc = 0;
+      for (j = 0; j < a.h; j++) {
+        for (i = 0; i < a.w; i++) {
+          d = Math.min(i, j, a.w - 1 - i, a.h - 1 - j);
+          if (d > 1) continue;
+          k = (j * a.w + i) * 4;
+          sc += Math.abs(cur[k] - cand[k]) + Math.abs(cur[k + 1] - cand[k + 1]) + Math.abs(cur[k + 2] - cand[k + 2]);
+        }
+      }
+      if (sc < bestScore) { bestScore = sc; best = { dx: dx, dy: dy }; }
+    }
+    return best;
+  }
+  function fromNearbyTexture(r, a, cur) {
+    if (!r.src) r.src = chooseSource(r, a, cur.data) || { none: true };
+    if (r.src.none) { edgeFill(a, cur); return; }
+    var cand = wctx.getImageData(a.x + r.src.dx, a.y + r.src.dy, a.w, a.h).data;
+    paste(a, cur, [cand], [1], [bandOffset(cur.data, cand, a)]);
+  }
+  /* last resort when no source block fits: continue the surrounding colours inward */
+  function edgeFill(a, cur) {
+    var d = cur.data, i, j, k, c, sw, sv, wt, e;
+    for (j = M; j < a.h - M; j++) {
+      for (i = M; i < a.w - M; i++) {
+        k = (j * a.w + i) * 4;
+        for (c = 0; c < 3; c++) {
+          sw = 0; sv = 0;
+          e = (j * a.w + (M - 1)) * 4; wt = 1 / Math.pow(i - M + 1, 2); sv += d[e + c] * wt; sw += wt;
+          e = (j * a.w + (a.w - M)) * 4; wt = 1 / Math.pow(a.w - M - i, 2); sv += d[e + c] * wt; sw += wt;
+          e = ((M - 1) * a.w + i) * 4; wt = 1 / Math.pow(j - M + 1, 2); sv += d[e + c] * wt; sw += wt;
+          e = ((a.h - M) * a.w + i) * 4; wt = 1 / Math.pow(a.h - M - j, 2); sv += d[e + c] * wt; sw += wt;
+          d[k + c] = sv / sw;
+        }
+      }
+    }
+    wctx.putImageData(cur, a.x, a.y);
+  }
+
+  function applyRegion(r, t) {
+    var a = area(r);
+    var cur = wctx.getImageData(a.x, a.y, a.w, a.h);
+    if (r.refs && r.refs.length) { fromOtherFrames(r, a, cur, t); } else { fromNearbyTexture(r, a, cur); }
+  }
   function renderFrame(t) {
     if (!vid.videoWidth) return;
     wctx.drawImage(vid, 0, 0, work.width, work.height);
     for (var i = 0; i < regions.length; i++) {
-      var r = regions[i];
-      if (t >= r.from && t <= r.to) applyRegion(r);
+      if (t >= regions[i].from && t <= regions[i].to) applyRegion(regions[i], t);
     }
   }
 
-  /* ---------- preview ---------- */
-  function refresh() {
-    if (recording || !vid.videoWidth) return;
-    var t = vid.currentTime || 0;
-    renderFrame(t);
-    sctx.drawImage(work, 0, 0);
-    var c = cropRect();
-    if (c.w < work.width || c.h < work.height) {
-      sctx.fillStyle = 'rgba(0,0,0,0.55)';
-      sctx.fillRect(0, 0, work.width, c.y);
-      sctx.fillRect(0, c.y + c.h, work.width, work.height - c.y - c.h);
-      sctx.fillRect(0, c.y, c.x, c.h);
-      sctx.fillRect(c.x + c.w, c.y, work.width - c.x - c.w, c.h);
+  /* grab clean reference patches from just before and after each box window */
+  var preparing = false;
+  function seekTo(t) {
+    return new Promise(function (res) {
+      if (Math.abs(vid.currentTime - t) < 0.002) return res();
+      var done = function () { clearTimeout(tm); vid.removeEventListener('seeked', done); res(); };
+      var tm = setTimeout(done, 4000);
+      vid.addEventListener('seeked', done);
+      vid.currentTime = t;
+    });
+  }
+  async function prepare() {
+    preparing = true;
+    for (var n = 0; n < regions.length; n++) {
+      var r = regions[n], a = area(r), cands = [];
+      r.refs = []; r.src = null;
+      if (r.from - GAP >= 0) cands.push(r.from - GAP);
+      if (r.to + GAP <= dur - 0.05) cands.push(r.to + GAP);
+      for (var q = 0; q < cands.length; q++) {
+        await seekTo(cands[q]);
+        wctx.drawImage(vid, 0, 0, work.width, work.height);
+        r.refs.push({ t: cands[q], data: wctx.getImageData(a.x, a.y, a.w, a.h) });
+      }
+      /* with two references the blend runs from the "before" patch to the "after" patch */
+      r.refs.sort(function (u, v) { return u.t - v.t; });
     }
+    preparing = false;
+  }
+
+  /* ---------- preview (boxes only; removal is built on export) ---------- */
+  function refresh() {
+    if (recording || preparing || !vid.videoWidth) return;
+    var t = vid.currentTime || 0;
+    sctx.drawImage(vid, 0, 0, work.width, work.height);
     var lw = Math.max(2, work.width / 320);
     sctx.lineWidth = lw;
     regions.forEach(function (r) {
@@ -484,15 +523,13 @@
     sctx.setLineDash([]);
     timeLbl.textContent = fmt(t);
   }
-
-  seek.addEventListener('input', function () { if (!recording) vid.currentTime = parseFloat(seek.value) || 0; });
-
+  seek.addEventListener('input', function () { if (!recording && !preparing) vid.currentTime = parseFloat(seek.value) || 0; });
   function pt(e) {
     var rect = stage.getBoundingClientRect();
     return { x: (e.clientX - rect.left) * (stage.width / rect.width), y: (e.clientY - rect.top) * (stage.height / rect.height) };
   }
   stage.addEventListener('pointerdown', function (e) {
-    if (recording) return;
+    if (recording || preparing) return;
     drawing = true; p0 = p1 = pt(e);
     try { stage.setPointerCapture(e.pointerId); } catch (err) {}
   });
@@ -517,31 +554,24 @@
     for (var i = 0; i < c.length; i++) { if (MediaRecorder.isTypeSupported(c[i])) return c[i]; }
     return '';
   }
-  function waitSeek() {
-    return new Promise(function (res) {
-      if (vid.currentTime === 0) return res();
-      var done = function () { vid.removeEventListener('seeked', done); res(); };
-      vid.addEventListener('seeked', done);
-      vid.currentTime = 0;
-    });
-  }
-  function setBusy(b) {
-    recording = b;
-    runBtn.disabled = b; cancelBtn.hidden = !b; prog.hidden = !b;
-    fileIn.disabled = b; seek.disabled = b;
-  }
+  function setBusy(b) { recording = b; runBtn.disabled = b; cancelBtn.hidden = !b; prog.hidden = !b; fileIn.disabled = b; seek.disabled = b; }
 
   runBtn.addEventListener('click', async function () {
-    if (recording || !vid.videoWidth) return;
+    if (recording || preparing || !vid.videoWidth) return;
+    if (!regions.length) { say('Draw at least one box over the watermark first.', true); return; }
     var outCanvas = document.createElement('canvas');
     if (typeof MediaRecorder === 'undefined' || !outCanvas.captureStream) {
       say('Your browser cannot record video here. Try a current version of Chrome, Edge, Safari, or Firefox.', true); return;
     }
-    var c = cropRect();
-    outCanvas.width = c.w; outCanvas.height = c.h;
+    var W = work.width - (work.width % 2), H = work.height - (work.height % 2);
+    outCanvas.width = W; outCanvas.height = H;
     var octx = outCanvas.getContext('2d');
-    var endT = Math.max(0.5, dur - Math.max(0, parseFloat(trimEnd.value) || 0));
     var mime = pickMime();
+
+    vid.pause(); runBtn.disabled = true;
+    say('Reading clean pixels from other moments in the video...');
+    await prepare();
+    runBtn.disabled = false;
 
     try {
       if (!ac) {
@@ -556,7 +586,7 @@
     if (dest) dest.stream.getAudioTracks().forEach(function (tr) { stream.addTrack(tr); });
     var chunks = [];
     try {
-      var opts = { videoBitsPerSecond: Math.min(12e6, Math.max(3e6, c.w * c.h * 4)) };
+      var opts = { videoBitsPerSecond: Math.min(12e6, Math.max(3e6, W * H * 4)) };
       if (mime) opts.mimeType = mime;
       recorder = new MediaRecorder(stream, opts);
     } catch (err) { say('Recording could not start in this browser.', true); return; }
@@ -571,41 +601,33 @@
       outVid.src = outUrl; dl.href = outUrl;
       dl.download = 'tiktok-watermark-removed.' + (type.indexOf('mp4') > -1 ? 'mp4' : 'webm');
       result.hidden = false;
-      say('Done. Check the result below, then download it.');
+      say('Done. Check every moment of the result, then download it.');
       vid.currentTime = 0;
     };
 
-    vid.pause();
-    await waitSeek();
+    await seekTo(0);
     cancelled = false; result.hidden = true; prog.value = 0;
     setBusy(true);
-    say('Processing in real time. Keep this tab open until it finishes.');
+    say('Rebuilding frames in real time. Keep this tab open until it finishes.');
     recorder.start(250);
 
     function tick() {
       if (!recording) return;
       var t = vid.currentTime;
       renderFrame(t);
-      octx.drawImage(work, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
-      prog.value = Math.min(1, t / endT);
-      if (t >= endT || vid.ended) { finish(); return; }
+      octx.drawImage(work, 0, 0, W, H, 0, 0, W, H);
+      prog.value = Math.min(1, t / Math.max(0.5, dur));
+      if (vid.ended || t >= dur - 0.03) { finish(); return; }
       next();
     }
-    function next() {
-      if (vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(tick); else requestAnimationFrame(tick);
-    }
-    function finish() {
-      vid.pause();
-      if (recorder && recorder.state !== 'inactive') recorder.stop();
-    }
+    function next() { if (vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(tick); else requestAnimationFrame(tick); }
+    function finish() { vid.pause(); if (recorder && recorder.state !== 'inactive') recorder.stop(); }
     vid.onended = function () { if (recording) finish(); };
     try { await vid.play(); } catch (err) { cancelled = true; finish(); say('Playback was blocked. Select Remove watermark again.', true); return; }
     next();
   });
-
   cancelBtn.addEventListener('click', function () {
-    cancelled = true;
-    vid.pause();
+    cancelled = true; vid.pause();
     if (recorder && recorder.state !== 'inactive') recorder.stop();
   });
 })();

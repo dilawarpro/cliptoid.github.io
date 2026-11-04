@@ -471,21 +471,11 @@
       preview.append(image);
       preview.append(createElement("figcaption", "", "Slideshow preview"));
       card.append(preview);
-    } else if (videoUrl) {
-      const preview = createElement("div", "cliptide-preview");
-      const video = createElement("video", "cliptide-preview__video");
-      video.controls = true;
-      video.preload = "none";
-      video.playsInline = true;
-      video.src = videoUrl;
-      if (previewUrl) video.poster = previewUrl;
-      preview.append(video);
-      card.append(preview);
     } else if (previewUrl) {
       const preview = createElement("figure", "cliptide-preview");
       const image = createElement("img");
       image.src = previewUrl;
-      image.alt = "TikTok post preview";
+      image.alt = videoUrl ? "TikTok video thumbnail" : "TikTok post preview";
       image.loading = "lazy";
       preview.append(image);
       card.append(preview);
@@ -652,6 +642,18 @@
     },
     true
   );
+
+  let autoFetchTimer = 0;
+  input.addEventListener("input", () => {
+    window.clearTimeout(autoFetchTimer);
+    if (!isTikTokUrl(input.value.trim())) return;
+
+    autoFetchTimer = window.setTimeout(() => {
+      if (!isLoading && isTikTokUrl(input.value.trim())) form.requestSubmit();
+    }, 700);
+  });
+
+  if (sharedTikTokUrl) form.requestSubmit();
 
   if (shareButton) {
     shareButton.addEventListener("click", async () => {

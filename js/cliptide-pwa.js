@@ -34,6 +34,19 @@
       control.hidden = false;
     });
   };
+  const installedControlsObserver = new MutationObserver((mutations) => {
+    if (!isAppInstalled()) return;
+    mutations.forEach(({ addedNodes }) => {
+      addedNodes.forEach((node) => {
+        if (!(node instanceof Element)) return;
+        if (node.matches(installControlSelector)) node.hidden = true;
+        node.querySelectorAll(installControlSelector).forEach((control) => {
+          control.hidden = true;
+        });
+      });
+    });
+  });
+  installedControlsObserver.observe(document.body, { childList: true, subtree: true });
   let installPrompt = null;
 
   if (isRunningInstalledApp()) rememberInstallation();

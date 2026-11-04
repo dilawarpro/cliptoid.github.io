@@ -142,6 +142,26 @@
     );
   };
 
+  const getSharedTikTokUrl = () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("share") !== "1") return null;
+
+    const sharedValues = [params.get("url"), params.get("text"), params.get("title")];
+    for (const sharedValue of sharedValues) {
+      if (!sharedValue) continue;
+      const candidates = sharedValue.match(/https?:\/\/[^\s<>"']+/gi) || [sharedValue.trim()];
+      for (const candidate of candidates) {
+        const cleanedCandidate = candidate.replace(/[.,!;:)\]}]+$/g, "");
+        if (isTikTokUrl(cleanedCandidate)) {
+          return /^https:\/\//i.test(cleanedCandidate)
+            ? cleanedCandidate
+            : `https://${cleanedCandidate}`;
+        }
+      }
+    }
+    return null;
+  };
+
   const safeMediaUrl = (value) => {
     if (typeof value !== "string") return null;
     try {
@@ -151,6 +171,15 @@
       }
       return url.href;
     } catch {
+
+      const shareParams = new URLSearchParams(window.location.search);
+      const sharedTikTokUrl = getSharedTikTokUrl();
+      if (shareParams.get("share") === "1") {
+        if (sharedTikTokUrl) input.value = sharedTikTokUrl;
+        const cleanUrl = new URL(window.location.href);
+        ["share", "url", "text", "title"].forEach((key) => cleanUrl.searchParams.delete(key));
+        window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+      }
       return null;
     }
   };

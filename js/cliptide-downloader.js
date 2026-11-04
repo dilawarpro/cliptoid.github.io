@@ -94,6 +94,10 @@
   const inputSpinner = createElement("span", "cliptide-input-spinner");
   inputSpinner.setAttribute("role", "status");
   inputSpinner.setAttribute("aria-label", "Fetching TikTok video");
+  inputSpinner.append(
+    createElement("span", "cliptide-input-spinner__arc cliptide-input-spinner__arc--outer"),
+    createElement("span", "cliptide-input-spinner__arc cliptide-input-spinner__arc--inner")
+  );
   input.parentElement.append(inputSpinner);
   const positionInputSpinner = () => {
     inputSpinner.style.top = `${input.offsetTop + input.offsetHeight / 2}px`;

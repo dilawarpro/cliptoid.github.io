@@ -1,4 +1,4 @@
-const CACHE_NAME = "cliptoid-shell-v42";
+const CACHE_NAME = "cliptoid-shell-v50";
 const APP_SHELL = [
   "/",
   "/index.html",

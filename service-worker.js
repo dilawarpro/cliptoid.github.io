@@ -1,4 +1,4 @@
-const CACHE_NAME = "cliptoid-shell-v50";
+const CACHE_NAME = "cliptoid-shell-v51";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -18,7 +18,6 @@ const APP_SHELL = [
   "/images/cliptide-512.png",
   "/css/cliptoid/style.min.v_21may2026.css",
   "/css/cliptoid/cliptide.css",
-  "/js/script_ssstik.min.v_2026oct16.3.js",
   "/js/cliptide-downloader.js",
   "/js/cliptide-pwa.js",
 ];

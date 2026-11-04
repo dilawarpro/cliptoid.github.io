@@ -86,14 +86,11 @@
       return;
     }
 
-    let message = "Open your browser menu and choose Install app or Add to Home Screen.";
-    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
-      message = "To install Cliptoid, tap Share in Safari, then choose Add to Home Screen.";
-    } else if (window.matchMedia("(display-mode: standalone)").matches) {
-      message = "Cliptoid is already installed on this device.";
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      showInstallStatus(installButton, "Cliptoid is already installed on this device.");
+    } else if (!("onbeforeinstallprompt" in window)) {
+      showInstallStatus(installButton, "Installable only in chrome browser");
     }
-
-    showInstallStatus(installButton, message);
   });
 
   const serviceWorkerSupported =

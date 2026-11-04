@@ -3,15 +3,40 @@
 
   const installControlSelector = "#dwapp_image, #cliptoid-install-result, #cliptoid-install-link";
   const getInstallControls = () => [...document.querySelectorAll(installControlSelector)];
-  const isAppInstalled = () =>
+  const installedStorageKey = "cliptoid-pwa-installed";
+  const isRunningInstalledApp = () =>
     window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const hasStoredInstallation = () => {
+    try {
+      return window.localStorage.getItem(installedStorageKey) === "true";
+    } catch {
+      return false;
+    }
+  };
+  const rememberInstallation = () => {
+    try {
+      window.localStorage.setItem(installedStorageKey, "true");
+    } catch {}
+  };
+  const clearRememberedInstallation = () => {
+    try {
+      window.localStorage.removeItem(installedStorageKey);
+    } catch {}
+  };
+  const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
   const hideInstallControls = () => {
     getInstallControls().forEach((control) => {
       control.hidden = true;
     });
   };
+  const showInstallControls = () => {
+    getInstallControls().forEach((control) => {
+      control.hidden = false;
+    });
+  };
   let installPrompt = null;
 
+  if (isRunningInstalledApp()) rememberInstallation();
   if (isAppInstalled()) hideInstallControls();
 
   const menuToggle = document.querySelector("#menu_toggler");
@@ -49,11 +74,16 @@
   window.addEventListener("beforeinstallprompt", (event) => {
     if (!getInstallControls().length) return;
     event.preventDefault();
+    if (!isRunningInstalledApp()) {
+      clearRememberedInstallation();
+      showInstallControls();
+    }
     installPrompt = event;
   });
 
   window.addEventListener("appinstalled", () => {
     installPrompt = null;
+    rememberInstallation();
     hideInstallControls();
   });
 

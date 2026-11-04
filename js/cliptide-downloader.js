@@ -120,9 +120,9 @@
 
     const guideList = createElement("ol");
     const guideItems = [
-      '1. <a href="https://cliptoid.com/">Install Cliptoid</a> as a PWA, then open TikTok and tap Share on the post you want to download.',
-      "2. Tap the three-dot menu, then select Cliptoid.",
-      "3. Tap the Cliptoid icon. Review the post link, then tap Download to save the video without a watermark directly from TikTok's share menu."
+      '<a href="https://cliptoid.com">Install Cliptoid</a> as a PWA, then open TikTok and tap Share on the post you want to download.',
+      "Tap the three-dot menu, then select Cliptoid.",
+      "Tap the Cliptoid icon. Review the post link, then tap Download to save the video without a watermark directly from TikTok's share menu."
     ];
 
     guideItems.forEach((item) => {

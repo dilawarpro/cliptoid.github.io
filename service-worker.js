@@ -18,7 +18,7 @@ const APP_SHELL = [
   "/images/cliptide-512.png",
   "/css/cliptoid/style.min.v_21may2026.css",
   "/css/cliptoid/cliptide.css",
-  "/js/script_ssstik.min.v_2026oct16.3.js",
+  "/js/cliptoid.js",
   "/js/cliptide-downloader.js",
   "/js/cliptide-pwa.js",
 ];

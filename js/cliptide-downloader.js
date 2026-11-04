@@ -112,13 +112,10 @@
     const updateHeading = createElement("h2", "", "What Makes Cliptoid Different from Other No-Watermark TikTok Downloaders?");
     updateHeading.id = "cliptoid-share-update";
     updateSection.append(updateHeading);
-    const installLink = createElement("a", "", "Install Cliptoid");
-    installLink.id = "cliptoid-install-link";
-    installLink.href = "#dwapp_image";
     const firstShareStep = createElement("li");
     const installStep = createElement("span");
     installStep.id = "cliptoid-install-step";
-    installStep.append(installLink, " as a PWA, then open TikTok and tap Share on the post you want to download.");
+    installStep.textContent = "Install Cliptoid as a PWA, then open TikTok and tap Share on the post you want to download.";
     const installedStep = createElement(
       "span",
       "",

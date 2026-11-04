@@ -1,14 +1,11 @@
 (() => {
   "use strict";
 
-  const installControlSelector = "#dwapp_image, #cliptoid-install-result, #cliptoid-install-link";
+  const installControlSelector = "#dwapp_image, #cliptoid-install-result";
   const getInstallControls = () => [...document.querySelectorAll(installControlSelector)];
   const installedStorageKey = "cliptoid-pwa-installed";
   const isRunningInstalledApp = () =>
     window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  const isSafariBrowser = () =>
-    /Safari/i.test(navigator.userAgent) &&
-    !/Chrome|Chromium|CriOS|Edg|OPR|Opera|FxiOS|Firefox|Electron/i.test(navigator.userAgent);
   const hasStoredInstallation = () => {
     try {
       return window.localStorage.getItem(installedStorageKey) === "true";
@@ -27,39 +24,49 @@
     } catch {}
   };
   const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
+  const headerInstallFallback = document.createElement("span");
+  headerInstallFallback.id = "cliptoid-install-fallback";
+  headerInstallFallback.className = "cliptide-install-fallback";
+  headerInstallFallback.setAttribute("role", "status");
+  headerInstallFallback.textContent = "Open Chrome and Install Cliptoid";
+  document.querySelector("#twt_promo_image")?.append(headerInstallFallback);
   const setInstalledStep = (installed) => {
     const installStep = document.querySelector("#cliptoid-install-step");
     const installedStep = document.querySelector("#cliptoid-installed-step");
     if (installStep) installStep.hidden = installed;
     if (installedStep) installedStep.hidden = !installed;
   };
-  const hideInstallControls = () => {
+  const setInstallAvailability = (available) => {
+    const installed = isAppInstalled();
+    document.body.classList.toggle("pwa-install-supported", available && !installed);
     getInstallControls().forEach((control) => {
-      control.hidden = true;
+      control.hidden = !available || installed;
     });
-  };
-  const showInstallControls = () => {
-    getInstallControls().forEach((control) => {
-      control.hidden = false;
-    });
+    headerInstallFallback.hidden = available || installed;
   };
   const installedControlsObserver = new MutationObserver((mutations) => {
-    if (!isAppInstalled()) return;
-    hideInstallControls();
-    setInstalledStep(true);
+    if (isAppInstalled()) {
+      rememberInstallation();
+      setInstallAvailability(false);
+      setInstalledStep(true);
+      return;
+    }
+    mutations.forEach(({ addedNodes }) => {
+      addedNodes.forEach((node) => {
+        if (!(node instanceof Element)) return;
+        if (node.matches("#cliptoid-install-result")) node.hidden = !installPrompt;
+        node.querySelectorAll("#cliptoid-install-result").forEach((control) => {
+          control.hidden = !installPrompt;
+        });
+      });
+    });
   });
   installedControlsObserver.observe(document.body, { childList: true, subtree: true });
   let installPrompt = null;
 
   if (isRunningInstalledApp()) rememberInstallation();
-  if (isAppInstalled()) {
-    hideInstallControls();
-    setInstalledStep(true);
-  } else {
-    const headerInstallButton = document.querySelector("#dwapp_image");
-    if (headerInstallButton) headerInstallButton.hidden = !isSafariBrowser();
-    setInstalledStep(false);
-  }
+  setInstallAvailability(false);
+  setInstalledStep(isAppInstalled());
 
   const menuToggle = document.querySelector("#menu_toggler");
   const menuWrapper = menuToggle?.closest(".menu-wrapper");
@@ -99,14 +106,14 @@
     if (isRunningInstalledApp()) return;
     clearRememberedInstallation();
     setInstalledStep(false);
-    showInstallControls();
     installPrompt = event;
+    setInstallAvailability(true);
   });
 
   window.addEventListener("appinstalled", () => {
     installPrompt = null;
     rememberInstallation();
-    hideInstallControls();
+    setInstallAvailability(false);
     setInstalledStep(true);
   });
 
@@ -130,7 +137,7 @@
 
     event.preventDefault();
     if (isAppInstalled()) {
-      hideInstallControls();
+      setInstallAvailability(false);
       setInstalledStep(true);
       return;
     }
@@ -141,28 +148,21 @@
         installPrompt = null;
         if (outcome === "accepted") {
           rememberInstallation();
-          hideInstallControls();
+          setInstallAvailability(false);
           setInstalledStep(true);
+        } else {
+          setInstallAvailability(false);
         }
       } catch (error) {
         console.error("Cliptoid installation could not start:", error);
+        installPrompt = null;
+        setInstallAvailability(false);
         showInstallStatus(installControl, "Your browser could not start installation. Try the browser menu instead.");
       }
       return;
     }
 
-    let message = "Open your browser menu and choose Install app or Add to Home Screen.";
-    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
-      message = "To install Cliptoid, tap Share in Safari, then choose Add to Home Screen.";
-    } else if (isSafariBrowser() && /Macintosh/i.test(navigator.userAgent)) {
-      message = "In Safari, choose File, then Add to Dock to install Cliptoid.";
-    } else if (window.matchMedia("(display-mode: standalone)").matches) {
-      message = "Cliptoid is already installed on this device.";
-    } else if (/Electron/i.test(navigator.userAgent)) {
-      message = "This embedded browser cannot start Cliptoid installation. Open Cliptoid in Chrome or Edge, then choose Install Cliptoid from the browser menu.";
-    }
-
-    showInstallStatus(installControl, message);
+    showInstallStatus(installControl, "Open Chrome and Install Cliptoid.");
   });
 
   const serviceWorkerSupported =

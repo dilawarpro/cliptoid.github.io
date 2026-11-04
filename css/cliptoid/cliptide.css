@@ -64,7 +64,6 @@ body {
   width: 2.5rem;
   aspect-ratio: 1;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, .98) 0 15%, transparent 20%);
   filter: drop-shadow(0 2px 5px rgba(0, 166, 251, .28));
   pointer-events: none;
   transform: translate(-50%, -50%);

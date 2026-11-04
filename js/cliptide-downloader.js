@@ -170,6 +170,7 @@
     ["share", "url", "text", "title"].forEach((key) => cleanUrl.searchParams.delete(key));
     window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
   }
+  input.focus({ preventScroll: true });
 
   const safeMediaUrl = (value) => {
     if (typeof value !== "string") return null;

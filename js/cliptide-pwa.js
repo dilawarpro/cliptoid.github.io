@@ -30,7 +30,7 @@
   headerInstallMessage.id = "cliptoid-install-message";
   headerInstallMessage.className = "cliptide-install-message";
   headerInstallMessage.setAttribute("role", "status");
-  headerInstallMessage.textContent = "Open Chrome and Install Cliptoid";
+  headerInstallMessage.textContent = "Installable only in Chrome browsers";
   headerInstallMessage.hidden = true;
   document.querySelector("#twt_promo_image")?.append(headerInstallMessage);
   const setInstalledStep = (installed) => {
@@ -174,7 +174,7 @@
       return;
     }
 
-    showInstallStatus(installControl, "Open Chrome and Install Cliptoid.");
+    showInstallStatus(installControl, "Installable only in Chrome browsers.");
   });
 
   const serviceWorkerSupported =

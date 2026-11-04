@@ -569,8 +569,11 @@ body {
 .cliptide-install-status {
   max-width: 260px;
   margin: .5rem 0 0;
+  display: block;
   color: #51456b;
   font-size: .85rem;
+  line-height: 1.4;
+  word-break: break-word;
   text-align: center;
 }
 

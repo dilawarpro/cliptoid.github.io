@@ -23,7 +23,29 @@
       window.localStorage.removeItem(installedStorageKey);
     } catch {}
   };
-  const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
+  const isSecureInstallContext = () =>
+    window.isSecureContext &&
+    (location.protocol === "https:" ||
+      location.hostname === "localhost" ||
+      location.hostname === "127.0.0.1");
+  const isInstallBrowserSupported = () => {
+    const userAgent = navigator.userAgent || "";
+    const brands = navigator.userAgentData?.brands || [];
+    return (
+      brands.some((brand) => /Chrome|Chromium|Edge/i.test(brand.brand)) ||
+      /(Chrome|Chromium|Edg)/i.test(userAgent)
+    );
+  };
+  const isAppInstalled = () => {
+    if (isRunningInstalledApp()) {
+      rememberInstallation();
+      return true;
+    }
+    if (hasStoredInstallation()) {
+      clearRememberedInstallation();
+    }
+    return false;
+  };
   const headerInstallButton = document.querySelector("#dwapp_image");
   const originalInstallButtonContent = headerInstallButton?.innerHTML || "";
   const setInstalledStep = (installed) => {
@@ -163,7 +185,15 @@
       return;
     }
 
-    showInstallStatus(installControl, "Installable only in Chrome browsers.");
+    if (!isSecureInstallContext() || !isInstallBrowserSupported()) {
+      showInstallStatus(
+        installControl,
+        "This browser cannot install the app. Open Cliptoid in Chrome or Edge from a secure page and use the browser menu to install it."
+      );
+      return;
+    }
+
+    showInstallStatus(installControl, "Use the browser menu to install Cliptoid.");
   });
 
   const serviceWorkerSupported =

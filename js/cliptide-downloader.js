@@ -105,15 +105,21 @@
   positionInputSpinner();
   window.addEventListener("resize", positionInputSpinner, { passive: true });
 
-  if (!document.querySelector("#cliptoid-share-update")) {
+  const isHomepage = window.location.pathname === "/" || window.location.pathname.endsWith("/index.html");
+  if (isHomepage && !document.querySelector("#cliptoid-share-update")) {
     const updateSection = createElement("section", "cliptide-guide");
     updateSection.setAttribute("aria-labelledby", "cliptoid-share-update");
     const updateHeading = createElement("h2", "", "What Makes Cliptoid Different from Other No-Watermark TikTok Downloaders?");
     updateHeading.id = "cliptoid-share-update";
     updateSection.append(updateHeading);
+    const installLink = createElement("a", "", "Cliptoid as a PWA");
+    installLink.id = "cliptoid-install-link";
+    installLink.href = "#";
+    const firstShareStep = createElement("li");
+    firstShareStep.append("Install ", installLink, ", then open TikTok and tap Share on the post you want to download.");
     const shareSteps = createElement("ol", "");
     shareSteps.append(
-      createElement("li", "", "Open TikTok and tap Share on the post you want to download."),
+      firstShareStep,
       createElement("li", "", "Tap the three-dot menu, then select Cliptoid."),
       createElement(
         "li",

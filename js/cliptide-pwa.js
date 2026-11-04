@@ -1,8 +1,8 @@
 (() => {
   "use strict";
 
-  const installButtonSelector = "#dwapp_image, #cliptoid-install-result";
-  const getInstallButtons = () => [...document.querySelectorAll(installButtonSelector)];
+  const installControlSelector = "#dwapp_image, #cliptoid-install-result, #cliptoid-install-link";
+  const getInstallControls = () => [...document.querySelectorAll(installControlSelector)];
   let installPrompt = null;
 
   const menuToggle = document.querySelector("#menu_toggler");
@@ -38,35 +38,35 @@
   }
 
   window.addEventListener("beforeinstallprompt", (event) => {
-    if (!getInstallButtons().length) return;
+    if (!getInstallControls().length) return;
     event.preventDefault();
     installPrompt = event;
   });
 
   window.addEventListener("appinstalled", () => {
     installPrompt = null;
-    getInstallButtons().forEach((button) => {
-      button.hidden = true;
+    getInstallControls().forEach((control) => {
+      control.hidden = true;
     });
   });
 
-  const showInstallStatus = (button, message) => {
-    let status = document.querySelector(`#${button.id}-status`);
+  const showInstallStatus = (control, message) => {
+    let status = document.querySelector(`#${control.id}-status`);
     if (!status) {
       status = document.createElement("p");
-      status.id = `${button.id}-status`;
+      status.id = `${control.id}-status`;
       status.className = "cliptide-install-status";
       status.setAttribute("role", "status");
       status.setAttribute("aria-live", "polite");
-      button.after(status);
+      control.after(status);
     }
     status.textContent = message;
   };
 
   document.addEventListener("click", async (event) => {
     if (!(event.target instanceof Element)) return;
-    const installButton = event.target.closest(installButtonSelector);
-    if (!installButton) return;
+    const installControl = event.target.closest(installControlSelector);
+    if (!installControl) return;
 
     event.preventDefault();
     if (installPrompt) {
@@ -75,13 +75,13 @@
         const { outcome } = await installPrompt.userChoice;
         installPrompt = null;
         if (outcome === "accepted") {
-          getInstallButtons().forEach((button) => {
-            button.hidden = true;
+          getInstallControls().forEach((control) => {
+            control.hidden = true;
           });
         }
       } catch (error) {
         console.error("Cliptoid installation could not start:", error);
-        showInstallStatus(installButton, "Your browser could not start installation. Try the browser menu instead.");
+        showInstallStatus(installControl, "Your browser could not start installation. Try the browser menu instead.");
       }
       return;
     }
@@ -93,7 +93,7 @@
       message = "Cliptoid is already installed on this device.";
     }
 
-    showInstallStatus(installButton, message);
+    showInstallStatus(installControl, message);
   });
 
   const serviceWorkerSupported =

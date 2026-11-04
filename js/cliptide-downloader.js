@@ -162,6 +162,15 @@
     return null;
   };
 
+  const shareParams = new URLSearchParams(window.location.search);
+  const sharedTikTokUrl = getSharedTikTokUrl();
+  if (shareParams.get("share") === "1") {
+    if (sharedTikTokUrl) input.value = sharedTikTokUrl;
+    const cleanUrl = new URL(window.location.href);
+    ["share", "url", "text", "title"].forEach((key) => cleanUrl.searchParams.delete(key));
+    window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+  }
+
   const safeMediaUrl = (value) => {
     if (typeof value !== "string") return null;
     try {
@@ -171,15 +180,6 @@
       }
       return url.href;
     } catch {
-
-      const shareParams = new URLSearchParams(window.location.search);
-      const sharedTikTokUrl = getSharedTikTokUrl();
-      if (shareParams.get("share") === "1") {
-        if (sharedTikTokUrl) input.value = sharedTikTokUrl;
-        const cleanUrl = new URL(window.location.href);
-        ["share", "url", "text", "title"].forEach((key) => cleanUrl.searchParams.delete(key));
-        window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
-      }
       return null;
     }
   };

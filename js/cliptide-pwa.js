@@ -26,13 +26,6 @@
   const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
   const headerInstallButton = document.querySelector("#dwapp_image");
   const originalInstallButtonContent = headerInstallButton?.innerHTML || "";
-  const headerInstallMessage = document.createElement("span");
-  headerInstallMessage.id = "cliptoid-install-message";
-  headerInstallMessage.className = "cliptide-install-message";
-  headerInstallMessage.setAttribute("role", "status");
-  headerInstallMessage.textContent = "Installable only in Chrome browsers";
-  headerInstallMessage.hidden = true;
-  document.querySelector("#twt_promo_image")?.append(headerInstallMessage);
   const setInstalledStep = (installed) => {
     const installStep = document.querySelector("#cliptoid-install-step");
     const installedStep = document.querySelector("#cliptoid-installed-step");
@@ -42,16 +35,12 @@
   const setInstallAvailability = (available) => {
     const installed = isAppInstalled();
     const canInstall = available && !installed;
-    document.body.classList.toggle("pwa-install-supported", canInstall);
     if (headerInstallButton) {
-      headerInstallButton.hidden = !canInstall;
+      headerInstallButton.hidden = installed;
       headerInstallButton.disabled = false;
-      if (canInstall) {
-        headerInstallButton.innerHTML = originalInstallButtonContent;
-        headerInstallButton.setAttribute("aria-label", "Install Cliptoid");
-      }
+      headerInstallButton.innerHTML = originalInstallButtonContent;
+      headerInstallButton.setAttribute("aria-label", "Install Cliptoid");
     }
-    headerInstallMessage.hidden = canInstall || installed;
     getInstallControls().forEach((control) => {
       if (control !== headerInstallButton) control.hidden = !canInstall;
     });

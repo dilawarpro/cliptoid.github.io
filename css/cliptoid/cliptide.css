@@ -55,6 +55,33 @@ body {
   box-sizing: border-box;
 }
 
+#_gcaptcha_pt .cliptide-input-spinner {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  display: none;
+  width: 2rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #00D2A8 0%, #00A6FB 50%, #635BFF 100%);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  animation: cliptide-input-spin .8s linear infinite;
+}
+
+#_gcaptcha_pt.htmx-request .cliptide-input-spinner {
+  display: block;
+}
+
+@keyframes cliptide-input-spin {
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
 #submit {
   box-sizing: border-box;
 }

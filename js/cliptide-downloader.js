@@ -91,6 +91,11 @@
 
   if (!form || !input || !submit || !target) return;
 
+  const inputSpinner = createElement("span", "cliptide-input-spinner");
+  inputSpinner.setAttribute("role", "status");
+  inputSpinner.setAttribute("aria-label", "Fetching TikTok video");
+  input.parentElement.append(inputSpinner);
+
   if (!document.querySelector("#cliptoid-share-update")) {
     const updateSection = createElement("section", "cliptide-guide");
     updateSection.setAttribute("aria-labelledby", "cliptoid-share-update");

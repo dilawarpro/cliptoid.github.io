@@ -3,7 +3,16 @@
 
   const installControlSelector = "#dwapp_image, #cliptoid-install-result, #cliptoid-install-link";
   const getInstallControls = () => [...document.querySelectorAll(installControlSelector)];
+  const isAppInstalled = () =>
+    window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const hideInstallControls = () => {
+    getInstallControls().forEach((control) => {
+      control.hidden = true;
+    });
+  };
   let installPrompt = null;
+
+  if (isAppInstalled()) hideInstallControls();
 
   const menuToggle = document.querySelector("#menu_toggler");
   const menuWrapper = menuToggle?.closest(".menu-wrapper");
@@ -45,9 +54,7 @@
 
   window.addEventListener("appinstalled", () => {
     installPrompt = null;
-    getInstallControls().forEach((control) => {
-      control.hidden = true;
-    });
+    hideInstallControls();
   });
 
   const showInstallStatus = (control, message) => {
@@ -75,9 +82,7 @@
         const { outcome } = await installPrompt.userChoice;
         installPrompt = null;
         if (outcome === "accepted") {
-          getInstallControls().forEach((control) => {
-            control.hidden = true;
-          });
+          hideInstallControls();
         }
       } catch (error) {
         console.error("Cliptoid installation could not start:", error);
@@ -91,6 +96,8 @@
       message = "To install Cliptoid, tap Share in Safari, then choose Add to Home Screen.";
     } else if (window.matchMedia("(display-mode: standalone)").matches) {
       message = "Cliptoid is already installed on this device.";
+    } else if (/Electron/i.test(navigator.userAgent)) {
+      message = "This embedded browser cannot start Cliptoid installation. Open Cliptoid in Chrome or Edge, then choose Install Cliptoid from the browser menu.";
     }
 
     showInstallStatus(installControl, message);

@@ -88,7 +88,7 @@
 
     if (window.matchMedia("(display-mode: standalone)").matches) {
       showInstallStatus(installButton, "Cliptoid is already installed on this device.");
-    } else if (!("onbeforeinstallprompt" in window)) {
+    } else if (!("BeforeInstallPromptEvent" in window)) {
       showInstallStatus(installButton, "Installable only in chrome browser");
     }
   });

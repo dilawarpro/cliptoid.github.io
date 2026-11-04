@@ -91,6 +91,29 @@
 
   if (!form || !input || !submit || !target) return;
 
+  if (!document.querySelector("#cliptoid-share-update")) {
+    const updateSection = createElement("section", "cliptide-guide");
+    updateSection.setAttribute("aria-labelledby", "cliptoid-share-update");
+    const updateHeading = createElement("h2", "", "Share a TikTok link with Cliptoid");
+    updateHeading.id = "cliptoid-share-update";
+    updateSection.append(updateHeading);
+    updateSection.append(
+      createElement(
+        "p",
+        "",
+        "On supported devices, share a TikTok post to Cliptoid from the share menu and its link can appear in the downloader for you. Check the link, then tap Download. If the link is not passed, choose Copy link in TikTok and paste it here."
+      )
+    );
+    updateSection.append(
+      createElement(
+        "p",
+        "",
+        "If SSSTik, SnapTik, TikMate, or another TikTok downloader does not work for you, try Cliptoid.com instead."
+      )
+    );
+    document.querySelector("main")?.append(updateSection);
+  }
+
   form.classList.remove("htmx-request");
   submit.disabled = false;
 

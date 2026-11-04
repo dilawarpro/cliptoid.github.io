@@ -3,49 +3,16 @@
 
   const installControlSelector = "#dwapp_image, #cliptoid-install-result";
   const getInstallControls = () => [...document.querySelectorAll(installControlSelector)];
-  const installedStorageKey = "cliptoid-pwa-installed";
   const isRunningInstalledApp = () =>
     window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  const hasStoredInstallation = () => {
-    try {
-      return window.localStorage.getItem(installedStorageKey) === "true";
-    } catch {
-      return false;
-    }
-  };
-  const rememberInstallation = () => {
-    try {
-      window.localStorage.setItem(installedStorageKey, "true");
-    } catch {}
-  };
-  const clearRememberedInstallation = () => {
-    try {
-      window.localStorage.removeItem(installedStorageKey);
-    } catch {}
-  };
+  let installationCompleted = false;
+  let installInProgress = false;
   const isSecureInstallContext = () =>
     window.isSecureContext &&
     (location.protocol === "https:" ||
       location.hostname === "localhost" ||
       location.hostname === "127.0.0.1");
-  const isInstallBrowserSupported = () => {
-    const userAgent = navigator.userAgent || "";
-    const brands = navigator.userAgentData?.brands || [];
-    return (
-      brands.some((brand) => /Chrome|Chromium|Edge/i.test(brand.brand)) ||
-      /(Chrome|Chromium|Edg)/i.test(userAgent)
-    );
-  };
-  const isAppInstalled = () => {
-    if (isRunningInstalledApp()) {
-      rememberInstallation();
-      return true;
-    }
-    if (hasStoredInstallation()) {
-      clearRememberedInstallation();
-    }
-    return false;
-  };
+  const isAppInstalled = () => isRunningInstalledApp() || installationCompleted;
   const headerInstallButton = document.querySelector("#dwapp_image");
   const originalInstallButtonContent = headerInstallButton?.innerHTML || "";
   const setInstalledStep = (installed) => {
@@ -69,7 +36,6 @@
   };
   const installedControlsObserver = new MutationObserver((mutations) => {
     if (isAppInstalled()) {
-      rememberInstallation();
       setInstallAvailability(false);
       setInstalledStep(true);
       return;
@@ -87,7 +53,6 @@
   installedControlsObserver.observe(document.body, { childList: true, subtree: true });
   let installPrompt = null;
 
-  if (isRunningInstalledApp()) rememberInstallation();
   setInstallAvailability(false);
   setInstalledStep(isAppInstalled());
 
@@ -127,7 +92,7 @@
     if (!getInstallControls().length) return;
     event.preventDefault();
     if (isRunningInstalledApp()) return;
-    clearRememberedInstallation();
+    installationCompleted = false;
     setInstalledStep(false);
     installPrompt = event;
     setInstallAvailability(true);
@@ -135,7 +100,7 @@
 
   window.addEventListener("appinstalled", () => {
     installPrompt = null;
-    rememberInstallation();
+    installationCompleted = true;
     setInstallAvailability(false);
     setInstalledStep(true);
   });
@@ -159,41 +124,44 @@
     if (!installControl) return;
 
     event.preventDefault();
+  if (installInProgress) return;
     if (isAppInstalled()) {
       setInstallAvailability(false);
       setInstalledStep(true);
       return;
     }
     if (installPrompt) {
+      const promptEvent = installPrompt;
+      installPrompt = null;
+      installInProgress = true;
       try {
-        installPrompt.prompt();
-        const { outcome } = await installPrompt.userChoice;
-        installPrompt = null;
+        await promptEvent.prompt();
+        const { outcome } = await promptEvent.userChoice;
         if (outcome === "accepted") {
-          rememberInstallation();
+          installationCompleted = true;
           setInstallAvailability(false);
           setInstalledStep(true);
         } else {
-          setInstallAvailability(false);
+          showInstallStatus(installControl, "Installation was cancelled. You can try again from the browser menu.");
         }
       } catch (error) {
         console.error("Cliptoid installation could not start:", error);
-        installPrompt = null;
-        setInstallAvailability(false);
         showInstallStatus(installControl, "Your browser could not start installation. Try the browser menu instead.");
+      } finally {
+        installInProgress = false;
       }
       return;
     }
 
-    if (!isSecureInstallContext() || !isInstallBrowserSupported()) {
+    if (!isSecureInstallContext()) {
       showInstallStatus(
         installControl,
-        "This browser cannot install the app. Open Cliptoid in Chrome or Edge from a secure page and use the browser menu to install it."
+        "Open Cliptoid from a secure HTTPS page, then use your browser menu to install it."
       );
       return;
     }
 
-    showInstallStatus(installControl, "Use the browser menu to install Cliptoid.");
+    showInstallStatus(installControl, "Use your browser menu to install Cliptoid.");
   });
 
   const serviceWorkerSupported =

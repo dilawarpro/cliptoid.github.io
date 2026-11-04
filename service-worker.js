@@ -1,4 +1,4 @@
-const CACHE_NAME = "cliptoid-shell-v58";
+const CACHE_NAME = "cliptoid-shell-v59";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -50,9 +50,18 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
   if (request.mode === "navigate") {
+    const networkResponse = fetch(request).then(async (response) => {
+      if (response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    });
+    event.waitUntil(networkResponse.then(() => undefined).catch(() => undefined));
     event.respondWith(
-      fetch(request)
-        .catch(async () => (await caches.match(request)) || (await caches.match("/index.html")))
+      caches.match(request, { ignoreSearch: true }).then(
+        (cached) => cached || networkResponse.catch(() => caches.match("/index.html"))
+      )
     );
     return;
   }

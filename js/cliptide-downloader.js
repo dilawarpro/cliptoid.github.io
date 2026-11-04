@@ -144,12 +144,12 @@
 
   const getSharedTikTokUrl = () => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("share") !== "1") return null;
-
-    const sharedValues = [params.get("url"), params.get("text"), params.get("title")];
-    for (const sharedValue of sharedValues) {
+    for (const sharedValue of params.values()) {
       if (!sharedValue) continue;
-      const candidates = sharedValue.match(/https?:\/\/[^\s<>"']+/gi) || [sharedValue.trim()];
+      const candidates =
+        sharedValue.match(/https?:\/\/[^\s<>"']+/gi) ||
+        sharedValue.match(/(?:[\w-]+\.)*tiktok\.com\/[^\s<>"']+/gi) ||
+        [sharedValue.trim()];
       for (const candidate of candidates) {
         const cleanedCandidate = candidate.replace(/[.,!;:)\]}]+$/g, "");
         if (isTikTokUrl(cleanedCandidate)) {
@@ -162,10 +162,10 @@
     return null;
   };
 
-  const shareParams = new URLSearchParams(window.location.search);
   const sharedTikTokUrl = getSharedTikTokUrl();
-  if (shareParams.get("share") === "1") {
-    if (sharedTikTokUrl) input.value = sharedTikTokUrl;
+  if (sharedTikTokUrl) {
+    input.value = sharedTikTokUrl;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
     const cleanUrl = new URL(window.location.href);
     ["share", "url", "text", "title"].forEach((key) => cleanUrl.searchParams.delete(key));
     window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);

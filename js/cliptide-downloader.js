@@ -105,17 +105,38 @@
   positionInputSpinner();
   window.addEventListener("resize", positionInputSpinner, { passive: true });
 
-  if (!document.querySelector("#cliptoid-share-update")) {
+  const isHomepage = location.pathname === "/" || location.pathname === "/index.html";
+
+  if (!document.querySelector("#cliptoid-share-update") && isHomepage) {
     const updateSection = createElement("section", "cliptide-guide");
     updateSection.setAttribute("aria-labelledby", "cliptoid-share-update");
-    const updateHeading = createElement("h2", "", "Share a TikTok link with Cliptoid");
+    const updateHeading = createElement(
+      "h2",
+      "",
+      "What Makes Cliptoid Different from Other No-Watermark TikTok Downloaders?"
+    );
     updateHeading.id = "cliptoid-share-update";
     updateSection.append(updateHeading);
+
+    const guideList = createElement("ol");
+    const guideItems = [
+      '1. <a href="https://cliptoid.com/#dwapp_image">Install Cliptoid</a> as a PWA, then open TikTok and tap Share on the post you want to download.',
+      "2. Tap the three-dot menu, then select Cliptoid.",
+      "3. Tap the Cliptoid icon. Review the post link, then tap Download to save the video without a watermark directly from TikTok's share menu."
+    ];
+
+    guideItems.forEach((item) => {
+      const listItem = createElement("li");
+      listItem.innerHTML = item;
+      guideList.append(listItem);
+    });
+
+    updateSection.append(guideList);
     updateSection.append(
       createElement(
         "p",
         "",
-        "On supported devices, share a TikTok post to Cliptoid from the share menu and its link can appear in the downloader for you. Check the link, then tap Download. If the link is not passed, choose Copy link in TikTok and paste it here."
+        "Our in-depth research found that other TikTok downloader tools do not offer this feature. It is currently available on Cliptoid.com."
       )
     );
     updateSection.append(

@@ -26,6 +26,12 @@
   const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
   const headerInstallButton = document.querySelector("#dwapp_image");
   const originalInstallButtonContent = headerInstallButton?.innerHTML || "";
+  const headerInstallMessage = document.createElement("span");
+  headerInstallMessage.id = "cliptoid-install-message";
+  headerInstallMessage.className = "cliptide-install-message";
+  headerInstallMessage.setAttribute("role", "status");
+  headerInstallMessage.textContent = "Open Chrome and Install Cliptoid";
+  document.querySelector("#twt_promo_image")?.append(headerInstallMessage);
   const setInstalledStep = (installed) => {
     const installStep = document.querySelector("#cliptoid-install-step");
     const installedStep = document.querySelector("#cliptoid-installed-step");
@@ -37,18 +43,14 @@
     const canInstall = available && !installed;
     document.body.classList.toggle("pwa-install-supported", canInstall);
     if (headerInstallButton) {
-      headerInstallButton.hidden = installed;
-      headerInstallButton.disabled = !canInstall;
+      headerInstallButton.hidden = !canInstall;
+      headerInstallButton.disabled = false;
       if (canInstall) {
         headerInstallButton.innerHTML = originalInstallButtonContent;
-        headerInstallButton.removeAttribute("data-install-fallback");
         headerInstallButton.setAttribute("aria-label", "Install Cliptoid");
-      } else if (!installed) {
-        headerInstallButton.replaceChildren(document.createTextNode("Open Chrome and Install Cliptoid"));
-        headerInstallButton.setAttribute("data-install-fallback", "true");
-        headerInstallButton.setAttribute("aria-label", "Open Chrome and Install Cliptoid");
       }
     }
+    headerInstallMessage.hidden = canInstall || installed;
     getInstallControls().forEach((control) => {
       if (control !== headerInstallButton) control.hidden = !canInstall;
     });

@@ -116,7 +116,17 @@
     installLink.id = "cliptoid-install-link";
     installLink.href = "#dwapp_image";
     const firstShareStep = createElement("li");
-    firstShareStep.append(installLink, " as a PWA, then open TikTok and tap Share on the post you want to download.");
+    const installStep = createElement("span");
+    installStep.id = "cliptoid-install-step";
+    installStep.append(installLink, " as a PWA, then open TikTok and tap Share on the post you want to download.");
+    const installedStep = createElement(
+      "span",
+      "",
+      "Cliptoid is already installed. Open TikTok and tap Share on the post you want to download."
+    );
+    installedStep.id = "cliptoid-installed-step";
+    installedStep.hidden = true;
+    firstShareStep.append(installStep, installedStep);
     const shareSteps = createElement("ol", "");
     shareSteps.append(
       firstShareStep,

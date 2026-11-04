@@ -6,6 +6,9 @@
   const installedStorageKey = "cliptoid-pwa-installed";
   const isRunningInstalledApp = () =>
     window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const isSafariBrowser = () =>
+    /Safari/i.test(navigator.userAgent) &&
+    !/Chrome|Chromium|CriOS|Edg|OPR|Opera|FxiOS|Firefox|Electron/i.test(navigator.userAgent);
   const hasStoredInstallation = () => {
     try {
       return window.localStorage.getItem(installedStorageKey) === "true";
@@ -24,6 +27,12 @@
     } catch {}
   };
   const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
+  const setInstalledStep = (installed) => {
+    const installStep = document.querySelector("#cliptoid-install-step");
+    const installedStep = document.querySelector("#cliptoid-installed-step");
+    if (installStep) installStep.hidden = installed;
+    if (installedStep) installedStep.hidden = !installed;
+  };
   const hideInstallControls = () => {
     getInstallControls().forEach((control) => {
       control.hidden = true;
@@ -36,21 +45,21 @@
   };
   const installedControlsObserver = new MutationObserver((mutations) => {
     if (!isAppInstalled()) return;
-    mutations.forEach(({ addedNodes }) => {
-      addedNodes.forEach((node) => {
-        if (!(node instanceof Element)) return;
-        if (node.matches(installControlSelector)) node.hidden = true;
-        node.querySelectorAll(installControlSelector).forEach((control) => {
-          control.hidden = true;
-        });
-      });
-    });
+    hideInstallControls();
+    setInstalledStep(true);
   });
   installedControlsObserver.observe(document.body, { childList: true, subtree: true });
   let installPrompt = null;
 
   if (isRunningInstalledApp()) rememberInstallation();
-  if (isAppInstalled()) hideInstallControls();
+  if (isAppInstalled()) {
+    hideInstallControls();
+    setInstalledStep(true);
+  } else {
+    const headerInstallButton = document.querySelector("#dwapp_image");
+    if (headerInstallButton) headerInstallButton.hidden = !isSafariBrowser();
+    setInstalledStep(false);
+  }
 
   const menuToggle = document.querySelector("#menu_toggler");
   const menuWrapper = menuToggle?.closest(".menu-wrapper");
@@ -87,10 +96,10 @@
   window.addEventListener("beforeinstallprompt", (event) => {
     if (!getInstallControls().length) return;
     event.preventDefault();
-    if (!isRunningInstalledApp()) {
-      clearRememberedInstallation();
-      showInstallControls();
-    }
+    if (isRunningInstalledApp()) return;
+    clearRememberedInstallation();
+    setInstalledStep(false);
+    showInstallControls();
     installPrompt = event;
   });
 
@@ -98,6 +107,7 @@
     installPrompt = null;
     rememberInstallation();
     hideInstallControls();
+    setInstalledStep(true);
   });
 
   const showInstallStatus = (control, message) => {
@@ -119,13 +129,20 @@
     if (!installControl) return;
 
     event.preventDefault();
+    if (isAppInstalled()) {
+      hideInstallControls();
+      setInstalledStep(true);
+      return;
+    }
     if (installPrompt) {
       try {
         installPrompt.prompt();
         const { outcome } = await installPrompt.userChoice;
         installPrompt = null;
         if (outcome === "accepted") {
+          rememberInstallation();
           hideInstallControls();
+          setInstalledStep(true);
         }
       } catch (error) {
         console.error("Cliptoid installation could not start:", error);
@@ -137,6 +154,8 @@
     let message = "Open your browser menu and choose Install app or Add to Home Screen.";
     if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
       message = "To install Cliptoid, tap Share in Safari, then choose Add to Home Screen.";
+    } else if (isSafariBrowser() && /Macintosh/i.test(navigator.userAgent)) {
+      message = "In Safari, choose File, then Add to Dock to install Cliptoid.";
     } else if (window.matchMedia("(display-mode: standalone)").matches) {
       message = "Cliptoid is already installed on this device.";
     } else if (/Electron/i.test(navigator.userAgent)) {

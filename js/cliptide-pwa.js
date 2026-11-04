@@ -31,6 +31,7 @@
   headerInstallMessage.className = "cliptide-install-message";
   headerInstallMessage.setAttribute("role", "status");
   headerInstallMessage.textContent = "Open Chrome and Install Cliptoid";
+  headerInstallMessage.hidden = true;
   document.querySelector("#twt_promo_image")?.append(headerInstallMessage);
   const setInstalledStep = (installed) => {
     const installStep = document.querySelector("#cliptoid-install-step");

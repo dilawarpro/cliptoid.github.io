@@ -3551,6 +3551,14 @@ body#sss_body #footer .language-flag-icon {
   }
 }
 
+body#sss_body #twt_promo_image > .cliptide-install-button {
+  display: none !important;
+}
+
+body#sss_body.pwa-install-supported #twt_promo_image > .cliptide-install-button:not([hidden]) {
+  display: block !important;
+}
+
 body#sss_body #twt_promo_image > .cliptide-install-message {
   display: inline-flex;
   width: min(210px, calc(100vw - 150px));

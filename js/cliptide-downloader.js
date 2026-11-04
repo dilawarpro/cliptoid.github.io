@@ -650,7 +650,7 @@
 
     autoFetchTimer = window.setTimeout(() => {
       if (!isLoading && isTikTokUrl(input.value.trim())) form.requestSubmit();
-    }, 700);
+    }, 100);
   });
 
   if (sharedTikTokUrl) form.requestSubmit();

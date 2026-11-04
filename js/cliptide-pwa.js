@@ -24,12 +24,8 @@
     } catch {}
   };
   const isAppInstalled = () => isRunningInstalledApp() || hasStoredInstallation();
-  const headerInstallFallback = document.createElement("span");
-  headerInstallFallback.id = "cliptoid-install-fallback";
-  headerInstallFallback.className = "cliptide-install-fallback";
-  headerInstallFallback.setAttribute("role", "status");
-  headerInstallFallback.textContent = "Open Chrome and Install Cliptoid";
-  document.querySelector("#twt_promo_image")?.append(headerInstallFallback);
+  const headerInstallButton = document.querySelector("#dwapp_image");
+  const originalInstallButtonContent = headerInstallButton?.innerHTML || "";
   const setInstalledStep = (installed) => {
     const installStep = document.querySelector("#cliptoid-install-step");
     const installedStep = document.querySelector("#cliptoid-installed-step");
@@ -38,11 +34,24 @@
   };
   const setInstallAvailability = (available) => {
     const installed = isAppInstalled();
-    document.body.classList.toggle("pwa-install-supported", available && !installed);
+    const canInstall = available && !installed;
+    document.body.classList.toggle("pwa-install-supported", canInstall);
+    if (headerInstallButton) {
+      headerInstallButton.hidden = installed;
+      headerInstallButton.disabled = !canInstall;
+      if (canInstall) {
+        headerInstallButton.innerHTML = originalInstallButtonContent;
+        headerInstallButton.removeAttribute("data-install-fallback");
+        headerInstallButton.setAttribute("aria-label", "Install Cliptoid");
+      } else if (!installed) {
+        headerInstallButton.replaceChildren(document.createTextNode("Open Chrome and Install Cliptoid"));
+        headerInstallButton.setAttribute("data-install-fallback", "true");
+        headerInstallButton.setAttribute("aria-label", "Open Chrome and Install Cliptoid");
+      }
+    }
     getInstallControls().forEach((control) => {
-      control.hidden = !available || installed;
+      if (control !== headerInstallButton) control.hidden = !canInstall;
     });
-    headerInstallFallback.hidden = available || installed;
   };
   const installedControlsObserver = new MutationObserver((mutations) => {
     if (isAppInstalled()) {

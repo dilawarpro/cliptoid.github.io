@@ -50,17 +50,36 @@
     });
   });
 
-  const showInstallStatus = (button, message) => {
-    let status = document.querySelector(`#${button.id}-status`);
+  const installStatusTimers = new WeakMap();
+
+  const showInstallStatus = (button, message, timeoutMs = 2000) => {
+    const statusId = `${button.id || "cliptoid-install-button"}-status`;
+    let status = document.getElementById(statusId);
     if (!status) {
       status = document.createElement("p");
-      status.id = `${button.id}-status`;
+      status.id = statusId;
       status.className = "cliptide-install-status";
       status.setAttribute("role", "status");
       status.setAttribute("aria-live", "polite");
       button.after(status);
     }
+
+    const existingTimer = installStatusTimers.get(button);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+    }
+
     status.textContent = message;
+    status.hidden = false;
+
+    const timer = window.setTimeout(() => {
+      status.textContent = "";
+      status.hidden = true;
+      status.remove();
+      installStatusTimers.delete(button);
+    }, timeoutMs);
+
+    installStatusTimers.set(button, timer);
   };
 
   document.addEventListener("click", async (event) => {

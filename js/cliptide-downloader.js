@@ -95,6 +95,11 @@
   inputSpinner.setAttribute("role", "status");
   inputSpinner.setAttribute("aria-label", "Fetching TikTok video");
   input.parentElement.append(inputSpinner);
+  const positionInputSpinner = () => {
+    inputSpinner.style.top = `${input.offsetTop + input.offsetHeight / 2}px`;
+  };
+  positionInputSpinner();
+  window.addEventListener("resize", positionInputSpinner, { passive: true });
 
   if (!document.querySelector("#cliptoid-share-update")) {
     const updateSection = createElement("section", "cliptide-guide");

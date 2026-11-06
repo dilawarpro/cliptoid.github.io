@@ -18,8 +18,8 @@ const APP_SHELL = [
   "/images/cliptide-512.png",
   "/css/cliptoid/style.min.v_21may2026.css",
   "/css/cliptoid/cliptoid.css",
-  "/js/cliptide-downloader.js",
-  "/js/cliptide-pwa.js",
+  "/js/cliptoid-downloader.js",
+  "/js/cliptoid-pwa.js",
 ];
 
 self.addEventListener("install", (event) => {

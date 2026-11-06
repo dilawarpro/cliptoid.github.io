@@ -12,6 +12,8 @@
   const mediaHostPattern = /\.tiktokcdn(?:-[a-z]{2})?\.com$/i;
   const historyStorageKey = "cliptoid.downloadHistory.v1";
   const activityStorageKey = "cliptoid.activityStreak.v1";
+  const downloadCountStorageKey = "cliptoid.downloadCount.v1";
+  const milestoneLabels = { 1: "first", 10: "10th", 100: "100th", 1000: "1,000th", 100000: "100,000th" };
   let isLoading = false;
   let currentResult = { title: "", cover: "" };
 
@@ -148,10 +150,9 @@
     "Visit or download every day to keep your streak growing."
   );
   const historyActions = createElement("div", "cliptoid-history__actions");
-  const reloadHistoryButton = createElement("button", "cliptoid-history__action", "Reload");
   const clearHistoryButton = createElement("button", "cliptoid-history__action", "Clear history");
-  reloadHistoryButton.type = clearHistoryButton.type = "button";
-  historyActions.append(reloadHistoryButton, clearHistoryButton);
+  clearHistoryButton.type = "button";
+  historyActions.append(clearHistoryButton);
   const historyTitleGroup = createElement("div", "cliptoid-history__title");
   historyTitleGroup.append(historyHeading, streakHint);
   historyHeader.append(historyTitleGroup, streakLabel, historyActions);
@@ -198,6 +199,10 @@
       });
       historyFilters.append(filter);
     });
+    const reloadHistoryButton = createElement("button", "cliptoid-history__action cliptoid-history__reload", "Reload");
+    reloadHistoryButton.type = "button";
+    reloadHistoryButton.addEventListener("click", renderHistory);
+    historyFilters.append(reloadHistoryButton);
 
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -254,7 +259,6 @@
     });
   };
 
-  reloadHistoryButton.addEventListener("click", renderHistory);
   clearHistoryButton.addEventListener("click", () => {
     if (!readDownloadHistory().length || !window.confirm("Clear all download history?")) return;
     try {
@@ -288,8 +292,138 @@
     }
   };
 
+  const incrementDownloadCount = () => {
+    try {
+      const stored = Number(localStorage.getItem(downloadCountStorageKey));
+      const previous = Number.isSafeInteger(stored) && stored > 0 ? stored : readDownloadHistory().length;
+      const count = previous + 1;
+      localStorage.setItem(downloadCountStorageKey, String(count));
+      return count;
+    } catch {
+      return 0;
+    }
+  };
+
+  let celebrationOpen = false;
+  const showCelebration = (count) => {
+    const label = milestoneLabels[count];
+    if (!label || celebrationOpen) return;
+    celebrationOpen = true;
+    const previousFocus = document.activeElement;
+    const overlay = createElement("div", "cliptoid-celebration");
+    const canvas = createElement("canvas", "cliptoid-celebration__confetti");
+    canvas.setAttribute("aria-hidden", "true");
+    const card = createElement("div", "cliptoid-celebration__card");
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-labelledby", "cliptoid-celebration-title");
+    const badge = createElement("span", "cliptoid-celebration__badge");
+    badge.append(createIcon("download"));
+    const title = createElement("h2", "", `Congratulations on your ${label} download from Cliptoid.com`);
+    title.id = "cliptoid-celebration-title";
+    const detail = createElement(
+      "p",
+      "",
+      `You have completed ${count.toLocaleString()} download${count === 1 ? "" : "s"}. Thanks for choosing Cliptoid!`
+    );
+    const closeButton = createElement("button", "cliptide-button cliptoid-celebration__close", "Close");
+    closeButton.type = "button";
+    const dismissButton = createElement("button", "cliptoid-celebration__dismiss", "\u00d7");
+    dismissButton.type = "button";
+    dismissButton.setAttribute("aria-label", "Close celebration");
+    card.append(dismissButton, badge, title, detail, closeButton);
+    overlay.append(canvas, card);
+    document.body.append(overlay);
+
+    const context = canvas.getContext("2d");
+    const colors = ["#00D2A8", "#00A6FB", "#635BFF", "#f97316", "#fde047"];
+    let particles = [];
+    let frame = 0;
+    const resize = () => {
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * ratio;
+      canvas.height = window.innerHeight * ratio;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    };
+    const burst = (originX, count) => {
+      for (let index = 0; index < count; index += 1) {
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.9;
+        const speed = 7 + Math.random() * 11;
+        particles.push({
+          x: originX,
+          y: window.innerHeight * 0.65,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          size: 6 + Math.random() * 7,
+          rotation: Math.random() * Math.PI,
+          spin: (Math.random() - 0.5) * 0.4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+    };
+    const tick = () => {
+      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      particles = particles.filter((particle) => particle.y < window.innerHeight + 20);
+      particles.forEach((particle) => {
+        particle.vx *= 0.99;
+        particle.vy = particle.vy * 0.99 + 0.3;
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.rotation += particle.spin;
+        context.save();
+        context.translate(particle.x, particle.y);
+        context.rotate(particle.rotation);
+        context.fillStyle = particle.color;
+        context.fillRect(-particle.size / 2, -particle.size / 4, particle.size, particle.size / 2);
+        context.restore();
+      });
+      if (particles.length) frame = window.requestAnimationFrame(tick);
+    };
+    const burstTimers = [];
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      resize();
+      window.addEventListener("resize", resize, { passive: true });
+      burst(window.innerWidth * 0.3, 90);
+      burst(window.innerWidth * 0.7, 90);
+      frame = window.requestAnimationFrame(tick);
+      burstTimers.push(window.setTimeout(() => {
+        burst(window.innerWidth * 0.5, 120);
+        frame = window.requestAnimationFrame(tick);
+      }, 450));
+    }
+
+    const focusable = [dismissButton, closeButton];
+    const close = () => {
+      window.cancelAnimationFrame(frame);
+      burstTimers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("resize", resize);
+      document.removeEventListener("keydown", onKeydown);
+      overlay.remove();
+      celebrationOpen = false;
+      if (previousFocus instanceof HTMLElement) previousFocus.focus({ preventScroll: true });
+    };
+    function onKeydown(event) {
+      if (event.key === "Escape") {
+        close();
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+        const index = focusable.indexOf(document.activeElement);
+        const step = event.shiftKey ? -1 : 1;
+        focusable[(index + step + focusable.length) % focusable.length].focus();
+      }
+    }
+    document.addEventListener("keydown", onKeydown);
+    closeButton.addEventListener("click", close);
+    dismissButton.addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    closeButton.focus({ preventScroll: true });
+  };
+
   const saveDownloadHistory = async (info, sourceUrl) => {
     markActiveDay();
+    const downloadCount = incrementDownloadCount();
     const submittedUrl = sourceUrl.trim();
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -308,6 +442,7 @@
       } catch {}
     }
     renderHistory();
+    showCelebration(downloadCount);
   };
 
   const inputSpinner = createElement("span", "cliptide-input-spinner");

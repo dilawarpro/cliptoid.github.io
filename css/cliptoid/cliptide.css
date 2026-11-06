@@ -1890,8 +1890,26 @@ body#sss_body .cliptoid-history__item {
 
 body#sss_body .cliptoid-history__details {
   display: grid;
+  flex: 1 1 12rem;
   min-width: 0;
   gap: .25rem;
+}
+
+body#sss_body .cliptoid-history__thumb {
+  flex: 0 0 auto;
+  width: 3.5rem;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eff6ff 0%, #f0fdfa 100%);
+  border: 1px solid var(--cliptoid-border);
+  border-radius: 9px;
+}
+
+body#sss_body .cliptoid-history__thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 body#sss_body .cliptoid-history__details strong {

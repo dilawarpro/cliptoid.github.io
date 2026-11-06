@@ -13,6 +13,7 @@
   const historyStorageKey = "cliptoid.downloadHistory.v1";
   const activityStorageKey = "cliptoid.activityStreak.v1";
   let isLoading = false;
+  let currentResult = { title: "", cover: "" };
 
   const getLocalDay = (date = new Date()) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -213,8 +214,18 @@
 
     recentHistory.forEach((entry) => {
       const item = createElement("li", "cliptoid-history__item");
+      const thumbnail = createElement("div", "cliptoid-history__thumb");
+      if (typeof entry.thumbnail === "string" && /^(data:image\/jpeg;base64,|https:\/\/)/.test(entry.thumbnail)) {
+        const image = createElement("img");
+        image.src = entry.thumbnail;
+        image.alt = "";
+        image.loading = "lazy";
+        image.referrerPolicy = "no-referrer";
+        image.addEventListener("error", () => image.remove());
+        thumbnail.append(image);
+      }
       const details = createElement("div", "cliptoid-history__details");
-      details.append(createElement("strong", "", entry.title || "TikTok download"));
+      details.append(createElement("strong", "", entry.title || "TikTok video"));
       details.append(createElement("time", "", new Date(entry.downloadedAt).toLocaleString()));
       const controls = createElement("div", "cliptoid-history__item-actions");
       const copyButton = createElement("button", "cliptoid-history__action", "Copy link");
@@ -238,7 +249,7 @@
         renderHistory();
       });
       controls.append(copyButton, deleteButton);
-      item.append(details, controls);
+      item.append(thumbnail, details, controls);
       historyList.append(item);
     });
   };
@@ -252,25 +263,50 @@
     renderHistory();
   });
   const toolSection = target.closest("section");
-  const featureSection = toolSection?.nextElementSibling?.matches("section.content")
-    ? toolSection.nextElementSibling
-    : null;
-  (featureSection || target).after(historyPanel);
+  (toolSection || target).after(historyPanel);
   renderHistory();
 
-  const saveDownloadHistory = (filename, sourceUrl) => {
+  const createThumbnail = async (url) => {
+    if (!url) return "";
+    try {
+      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (!response.ok) throw new Error("Thumbnail unavailable");
+      const bitmap = await createImageBitmap(await response.blob());
+      const width = 96;
+      const height = 128;
+      const canvas = createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const scale = Math.max(width / bitmap.width, height / bitmap.height);
+      const drawWidth = bitmap.width * scale;
+      const drawHeight = bitmap.height * scale;
+      canvas.getContext("2d").drawImage(bitmap, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+      bitmap.close?.();
+      return canvas.toDataURL("image/jpeg", 0.7);
+    } catch {
+      return url;
+    }
+  };
+
+  const saveDownloadHistory = async (info, sourceUrl) => {
     markActiveDay();
     const submittedUrl = sourceUrl.trim();
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title: filename,
+      title: info.title || "TikTok video",
+      thumbnail: await createThumbnail(info.cover),
       sourceUrl: isTikTokUrl(submittedUrl) ? (/^https:\/\//i.test(submittedUrl) ? submittedUrl : `https://${submittedUrl}`) : "",
       downloadedAt: new Date().toISOString(),
     };
+    const history = [entry, ...readDownloadHistory()].slice(0, 100);
     try {
-      const history = [entry, ...readDownloadHistory()].slice(0, 100);
       localStorage.setItem(historyStorageKey, JSON.stringify(history));
-    } catch {}
+    } catch {
+      try {
+        const trimmed = history.map((savedEntry, index) => (index < 10 ? savedEntry : { ...savedEntry, thumbnail: "" }));
+        localStorage.setItem(historyStorageKey, JSON.stringify(trimmed));
+      } catch {}
+    }
     renderHistory();
   };
 
@@ -443,6 +479,7 @@
     const safeUrl = safeMediaUrl(url);
     if (!safeUrl) return false;
     const sourcePostUrl = input.value.trim();
+    const resultInfo = { ...currentResult };
     const button = createElement(
       "button",
       `cliptide-button cliptide-download${variant ? ` cliptide-download--${variant}` : ""}`,
@@ -525,7 +562,7 @@
         downloadLink.click();
         downloadLink.remove();
         window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-        saveDownloadHistory(filename, sourcePostUrl);
+        saveDownloadHistory(resultInfo, sourcePostUrl);
         status.textContent = "Your download has started.";
         setButtonLabel(button, "Download started");
         window.setTimeout(() => {
@@ -664,6 +701,7 @@
           .filter(Boolean)
       : [];
     const previewUrl = safeMediaUrl(data.cover || data.origin_cover || data.ai_dynamic_cover);
+    currentResult = { title, cover: previewUrl || slideshowImages[0] || "" };
     const videoUrl = safeMediaUrl(data.hdplay || data.play);
     const creatorName =
       typeof data.author?.nickname === "string"

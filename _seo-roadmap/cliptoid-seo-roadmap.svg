@@ -1,0 +1,213 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2300" viewBox="0 0 1600 2300" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1e1b4b"/>
+      <stop offset="1" stop-color="#635BFF"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .bar { fill: #635BFF; }
+    .bt { fill: #ffffff; font-size: 24px; font-weight: 700; }
+    .lbl { font-size: 14px; font-weight: 700; letter-spacing: 1px; }
+    .sm { fill: #6b7280; font-size: 14px; }
+    .t { fill: #1f2937; font-size: 17px; }
+    .tb { fill: #111827; font-size: 18px; font-weight: 700; }
+    .l16 { fill: #1f2937; font-size: 16px; }
+    .h2 { fill: #635BFF; font-size: 15px; font-weight: 700; }
+    .row { fill: #1f2937; font-size: 15px; }
+  </style>
+
+  <rect width="1600" height="2300" fill="#f8fafc"/>
+
+  <!-- Header -->
+  <rect width="1600" height="150" fill="url(#hdr)"/>
+  <text x="40" y="70" fill="#ffffff" font-size="52" font-weight="800">CLIPTOID SEO ROADMAP</text>
+  <text x="40" y="112" fill="#e0e7ff" font-size="22">Proposed changes for approval. Homepage first, then every tool page. Prepared 6 November 2026.</text>
+
+  <!-- 1. Title and meta -->
+  <rect class="bar" x="40" y="180" width="1520" height="44" rx="8"/>
+  <text class="bt" x="60" y="211">1. SEO TITLE AND META DESCRIPTION (HOMEPAGE)</text>
+
+  <rect x="40" y="240" width="740" height="230" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+  <text class="lbl" x="60" y="268" fill="#b91c1c">EXISTING</text>
+  <text class="sm" x="60" y="296">SEO title</text>
+  <text class="tb" x="60" y="320">TikTok Downloader - Download Videos Without Watermark Online</text>
+  <text class="sm" x="60" y="358">Meta description</text>
+  <text class="t" x="60" y="383">Download TikTok videos without watermark in MP4, MP3, and slideshow</text>
+  <text class="t" x="60" y="407">formats. Cliptoid previews the available media from a TikTok link in</text>
+  <text class="t" x="60" y="431">your browser.</text>
+
+  <rect x="820" y="240" width="740" height="230" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+  <text class="lbl" x="840" y="268" fill="#15803d">PROPOSED</text>
+  <text class="sm" x="840" y="296">SEO title</text>
+  <text class="tb" x="840" y="320">TikTok Downloader Without Watermark | Free MP4 and MP3</text>
+  <text class="sm" x="840" y="358">Meta description</text>
+  <text class="t" x="840" y="383">Paste a TikTok link or share it straight from the TikTok app. Save</text>
+  <text class="t" x="840" y="407">videos without watermark as MP4, plus MP3 audio and slideshow photos.</text>
+  <text class="t" x="840" y="431">Free, no login.</text>
+  <text class="sm" x="840" y="456">Why: keyword leads the title, the snippet names the share menu benefit.</text>
+
+  <!-- 2. Headings and content -->
+  <rect class="bar" x="40" y="490" width="1520" height="44" rx="8"/>
+  <text class="bt" x="60" y="521">2. H1, H2 AND H3 STRUCTURE, CONTENT IMPROVEMENTS</text>
+
+  <rect x="40" y="550" width="640" height="350" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="60" y="578" fill="#b91c1c">H1 EXISTING</text>
+  <text class="t" x="60" y="602">TikTok Video Downloader No Watermark</text>
+  <text class="lbl" x="60" y="634" fill="#15803d">H1 PROPOSED</text>
+  <text class="tb" x="60" y="658">TikTok Downloader Without TikTok Watermark</text>
+  <text class="lbl" x="60" y="696" fill="#635BFF">CONTENT IMPROVEMENTS</text>
+  <text class="l16" x="60" y="724">• Share menu guide for Android with 3 screenshots</text>
+  <text class="l16" x="60" y="752">• Honest iPhone section built on the copy link method</text>
+  <text class="l16" x="60" y="780">• Speed explained by fewer steps, no unproven claims</text>
+  <text class="l16" x="60" y="808">• Three repeated step blocks given separate jobs</text>
+  <text class="l16" x="60" y="836">• Script only section moved into static HTML</text>
+  <text class="l16" x="60" y="864">• New FAQs: share menu missing, quality, cost, safety</text>
+
+  <rect x="700" y="550" width="860" height="350" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="720" y="578" fill="#635BFF">PROPOSED OUTLINE</text>
+  <text class="h2" x="720" y="604">H1</text><text class="row" x="760" y="604">TikTok Downloader Without TikTok Watermark</text>
+  <text class="h2" x="720" y="630">H2</text><text class="row" x="760" y="630">What is a TikTok downloader?</text>
+  <text class="h2" x="720" y="656">H2</text><text class="row" x="760" y="656">Is Cliptoid a fast TikTok downloader?</text>
+  <text class="h2" x="720" y="682">H2</text><text class="row" x="760" y="682">What is a TikTok video downloader without watermark?</text>
+  <text class="h2" x="720" y="708">H2</text><text class="row" x="760" y="708">How to download a TikTok video without watermark</text>
+  <text class="h2" x="720" y="734">H2</text><text class="row" x="760" y="734">Can you download a TikTok video directly from TikTok?</text>
+  <text class="h2" x="720" y="760">H2</text><text class="row" x="760" y="760">Why choose Cliptoid?</text>
+  <text class="h2" x="720" y="786">H2</text><text class="row" x="760" y="786">Download TikTok videos online without watermark</text>
+  <text class="h2" x="720" y="812">H2</text><text class="row" x="760" y="812">TikTok downloader on your mobile phone</text>
+  <text class="h2" x="720" y="838">H2</text><text class="row" x="760" y="838">TikTok video downloader for PC</text>
+  <text class="h2" x="720" y="864">H2</text><text class="row" x="760" y="864">TikTok downloader for iPhone and iOS</text>
+  <text class="h2" x="1180" y="604">H2</text><text class="row" x="1220" y="604">Common questions</text>
+  <text class="h2" x="1180" y="630">H3</text><text class="row" x="1220" y="630">A few words from the developer</text>
+
+  <!-- 3. Keywords -->
+  <rect class="bar" x="40" y="920" width="1520" height="44" rx="8"/>
+  <text class="bt" x="60" y="951">3. KEYWORD CLUSTERS</text>
+
+  <rect x="40" y="980" width="1520" height="56" rx="10" fill="#ede9fe" stroke="#c4b5fd"/>
+  <text class="tb" x="60" y="1015">PRIMARY: tiktok downloader without watermark</text>
+  <text class="sm" x="900" y="1015">Search volume and difficulty: unavailable, no data source</text>
+
+  <rect x="40" y="1055" width="365" height="200" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="60" y="1082" fill="#635BFF">SECONDARY</text>
+  <text class="l16" x="60" y="1112">tiktok video downloader</text>
+  <text class="l16" x="60" y="1140">download tiktok videos</text>
+  <text class="l16" x="60" y="1168">tiktok downloader</text>
+  <text class="l16" x="60" y="1196">save tiktok video no watermark</text>
+  <text class="l16" x="60" y="1224">tiktok mp3 downloader</text>
+
+  <rect x="425" y="1055" width="365" height="200" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="445" y="1082" fill="#635BFF">LONG TAIL</text>
+  <text class="l16" x="445" y="1112">download tiktok iphone no watermark</text>
+  <text class="l16" x="445" y="1140">tiktok video downloader for pc</text>
+  <text class="l16" x="445" y="1168">download tiktok from share menu</text>
+  <text class="l16" x="445" y="1196">tiktok downloader no login</text>
+  <text class="l16" x="445" y="1224">snaptik alternative</text>
+
+  <rect x="810" y="1055" width="365" height="200" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="830" y="1082" fill="#635BFF">QUESTIONS</text>
+  <text class="l16" x="830" y="1112">how to download tiktok no watermark</text>
+  <text class="l16" x="830" y="1140">why does my download have a logo</text>
+  <text class="l16" x="830" y="1168">can you download tiktok directly</text>
+  <text class="l16" x="830" y="1196">where do tiktok downloads go</text>
+  <text class="l16" x="830" y="1224">is tiktok downloader safe</text>
+
+  <rect x="1195" y="1055" width="365" height="200" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="1215" y="1082" fill="#635BFF">SEMANTIC AND SUPPORTING</text>
+  <text class="l16" x="1215" y="1112">MP4, MP3, HD, slideshow photos</text>
+  <text class="l16" x="1215" y="1140">share menu, install as app, PWA</text>
+  <text class="l16" x="1215" y="1168">Chrome, Safari, Android, iPhone</text>
+  <text class="l16" x="1215" y="1196">caption and hashtag copy</text>
+  <text class="l16" x="1215" y="1224">clean copy, burned in logo</text>
+
+  <!-- 4. Gaps and benefits -->
+  <rect class="bar" x="40" y="1275" width="1520" height="44" rx="8"/>
+  <text class="bt" x="60" y="1306">4. COMPETITOR CONTENT GAPS AND EXPECTED BENEFITS</text>
+
+  <rect x="40" y="1335" width="740" height="260" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="60" y="1363" fill="#b91c1c">GAPS WE CAN USE</text>
+  <text class="l16" x="60" y="1393">• Competitor pages were unreadable; gaps come from Bing results</text>
+  <text class="l16" x="60" y="1423">• iPhone searches are answered mostly by publisher guides</text>
+  <text class="l16" x="60" y="1453">• No snippet we saw mentions a share menu route</text>
+  <text class="l16" x="60" y="1483">• Tool snippets lead with speed claims; we answer with steps</text>
+  <text class="l16" x="60" y="1513">• Stating limits (private, expired) builds trust, cuts bounces</text>
+  <text class="l16" x="60" y="1543">• Open gap: explain why a saved video can still show a logo</text>
+
+  <rect x="820" y="1335" width="740" height="260" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="lbl" x="840" y="1363" fill="#15803d">EXPECTED BENEFITS</text>
+  <text class="l16" x="840" y="1393">• Matches intent for Android, PC and iPhone searchers</text>
+  <text class="l16" x="840" y="1423">• Benefit led snippet can lift click through rate</text>
+  <text class="l16" x="840" y="1453">• Fewer failed visits: limits and fixes are stated up front</text>
+  <text class="l16" x="840" y="1483">• E-E-A-T: named developer, screenshots, honest limits</text>
+  <text class="l16" x="840" y="1513">• More internal links to MP3, slideshow and caption pages</text>
+  <text class="l16" x="840" y="1543">• No ranking is promised; links and authority also matter</text>
+
+  <!-- 5. Other pages -->
+  <rect class="bar" x="40" y="1615" width="1520" height="44" rx="8"/>
+  <text class="bt" x="60" y="1646">5. PROPOSED CHANGES FOR EVERY OTHER ENGLISH PAGE</text>
+
+  <rect x="40" y="1675" width="1520" height="34" fill="#e0e7ff"/>
+  <text class="tb" x="60" y="1698" style="font-size:15px">Page</text>
+  <text class="tb" x="330" y="1698" style="font-size:15px">Proposed SEO title</text>
+  <text class="tb" x="1000" y="1698" style="font-size:15px">Key change</text>
+
+  <rect x="40" y="1709" width="1520" height="280" fill="#ffffff" stroke="#e5e7eb"/>
+  <text class="row" x="60" y="1736">download-tiktok-mp3</text>
+  <text class="row" x="330" y="1736">TikTok MP3 Downloader | Save TikTok Audio Online</text>
+  <text class="row" x="1000" y="1736">H1 matches query; music rights note</text>
+  <text class="row" x="60" y="1776">download-tiktok-stories</text>
+  <text class="row" x="330" y="1776">TikTok Photo and Slideshow Downloader | Save TikTok Images</text>
+  <text class="row" x="1000" y="1776">Honest about stories; slideshow focus</text>
+  <text class="row" x="60" y="1816">tiktok-caption</text>
+  <text class="row" x="330" y="1816">TikTok Caption Copier | Copy TikTok Captions and Hashtags</text>
+  <text class="row" x="1000" y="1816">Drop "Download": the tool makes no file</text>
+  <text class="row" x="60" y="1856">tiktok-viewer</text>
+  <text class="row" x="330" y="1856">Keep title, add a scope box</text>
+  <text class="row" x="1000" y="1856">Link preview only, no profile search</text>
+  <text class="row" x="60" y="1896">tiktok-watermark-remover</text>
+  <text class="row" x="330" y="1896">TikTok Watermark Remover: Save a Clean Copy From a Link</text>
+  <text class="row" x="1000" y="1896">Title matches what the tool really does</text>
+  <text class="row" x="60" y="1936">snaptik-tiktok-downloader</text>
+  <text class="row" x="330" y="1936">SnapTik Alternative for TikTok Downloads | Cliptoid</text>
+  <text class="row" x="1000" y="1936">Checklist for choosing a downloader</text>
+  <text class="row" x="60" y="1976">about</text>
+  <text class="row" x="330" y="1976">About Cliptoid | The Developer and How the Tool Works</text>
+  <text class="row" x="1000" y="1976">E-E-A-T: who, how, contact, limits</text>
+
+  <!-- 6. Roadmap -->
+  <rect class="bar" x="40" y="2010" width="1520" height="44" rx="8"/>
+  <text class="bt" x="60" y="2041">6. IMPLEMENTATION ROADMAP (AFTER YOUR APPROVAL)</text>
+
+  <rect x="40" y="2070" width="288" height="150" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+  <text class="tb" x="60" y="2100">Step 1: Approve</text>
+  <text class="l16" x="60" y="2132">Confirm copy and scope</text>
+  <text class="l16" x="60" y="2158">Confirm iPhone steps on</text>
+  <text class="l16" x="60" y="2184">a real device</text>
+
+  <rect x="348" y="2070" width="288" height="150" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+  <text class="tb" x="368" y="2100">Step 2: Homepage</text>
+  <text class="l16" x="368" y="2132">Title, meta, H1, H2 blocks</text>
+  <text class="l16" x="368" y="2158">3 screenshots, new FAQs</text>
+  <text class="l16" x="368" y="2184">IDs and classes untouched</text>
+
+  <rect x="656" y="2070" width="288" height="150" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+  <text class="tb" x="676" y="2100">Step 3: Tool pages</text>
+  <text class="l16" x="676" y="2132">MP3, slideshow, caption,</text>
+  <text class="l16" x="676" y="2158">viewer, remover, guide,</text>
+  <text class="l16" x="676" y="2184">about</text>
+
+  <rect x="964" y="2070" width="288" height="150" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+  <text class="tb" x="984" y="2100">Step 4: Links, checks</text>
+  <text class="l16" x="984" y="2132">Remover in footer links</text>
+  <text class="l16" x="984" y="2158">Sitemap dates, cache bump</text>
+  <text class="l16" x="984" y="2184">Verify headings, links</text>
+
+  <rect x="1272" y="2070" width="288" height="150" rx="10" fill="#ffffff" stroke="#c4b5fd"/>
+  <text class="tb" x="1292" y="2100">Step 5: Localized</text>
+  <text class="l16" x="1292" y="2132">Fix wrong claims and typos</text>
+  <text class="l16" x="1292" y="2158">Then translate approved</text>
+  <text class="l16" x="1292" y="2184">English copy, 16 languages</text>
+
+  <text class="sm" x="40" y="2262">Verified only: your source files and Bing results. Google results, SnapTik and SSSTik pages could not be fetched. Volumes and difficulty are unavailable.</text>
+  <text class="sm" x="40" y="2284">No ranking is guaranteed.</text>
+</svg>

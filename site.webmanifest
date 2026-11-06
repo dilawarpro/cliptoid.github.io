@@ -20,13 +20,13 @@
   "theme_color": "#635BFF",
   "icons": [
     {
-      "src": "/images/cliptide-192.png",
+      "src": "/images/cliptoid-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/images/cliptide-512.png",
+      "src": "/images/cliptoid-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

@@ -108,6 +108,24 @@
     button.replaceChildren(iconElement, createElement("span", "cliptoid-button__label", label));
   };
 
+  const createFlameIcon = () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    svg.classList.add("cliptoid-flame");
+    [
+      ["cliptoid-flame__outer", "M12 2c.8 3.2 5.5 5.6 5.5 12.5a5.5 5.5 0 0 1-11 0c0-2.4.9-4.2 2.2-5.4.2 1.5.9 2.5 1.8 2.9C10.2 8.6 10.6 4.8 12 2Z"],
+      ["cliptoid-flame__inner", "M12 20a2.8 2.8 0 0 1-2.8-2.8c0-1.6 1.3-2.5 2.8-4 1.5 1.5 2.8 2.4 2.8 4A2.8 2.8 0 0 1 12 20Z"],
+    ].forEach(([className, pathData]) => {
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("class", className);
+      path.setAttribute("d", pathData);
+      svg.append(path);
+    });
+    return svg;
+  };
+
   const setButtonLabel = (button, label) => {
     const labelElement = button.querySelector(".cliptoid-button__label");
     if (labelElement) labelElement.textContent = label;
@@ -123,12 +141,19 @@
   const historyHeading = createElement("h2", "", "Your activity");
   historyHeading.id = "cliptoid-history-title";
   const streakLabel = createElement("p", "cliptoid-history__streak");
+  const streakHint = createElement(
+    "p",
+    "cliptoid-history__hint",
+    "Visit or download every day to keep your streak growing."
+  );
   const historyActions = createElement("div", "cliptoid-history__actions");
   const reloadHistoryButton = createElement("button", "cliptoid-history__action", "Reload");
   const clearHistoryButton = createElement("button", "cliptoid-history__action", "Clear history");
   reloadHistoryButton.type = clearHistoryButton.type = "button";
   historyActions.append(reloadHistoryButton, clearHistoryButton);
-  historyHeader.append(historyHeading, streakLabel, historyActions);
+  const historyTitleGroup = createElement("div", "cliptoid-history__title");
+  historyTitleGroup.append(historyHeading, streakHint);
+  historyHeader.append(historyTitleGroup, streakLabel, historyActions);
 
   const historyFilters = createElement("div", "cliptoid-history__filters");
   historyFilters.setAttribute("role", "group");
@@ -153,7 +178,14 @@
         return { streak: 0 };
       }
     })();
-    streakLabel.textContent = `Download streak: ${activity.streak || 0} ${(activity.streak || 0) === 1 ? "day" : "days"}`;
+    const streakDays = Number.isSafeInteger(activity.streak) && activity.streak > 0 ? activity.streak : 0;
+    streakLabel.classList.toggle("is-active", streakDays > 0);
+    streakLabel.setAttribute("aria-label", `Current streak: ${streakDays} ${streakDays === 1 ? "day" : "days"}`);
+    streakLabel.replaceChildren(
+      createFlameIcon(),
+      createElement("strong", "cliptoid-history__streak-count", String(streakDays)),
+      createElement("span", "cliptoid-history__streak-label", "day streak")
+    );
     historyFilters.replaceChildren();
     [1, 7, 30].forEach((days) => {
       const filter = createElement("button", "cliptoid-history__filter", `${days} day${days === 1 ? "" : "s"}`);

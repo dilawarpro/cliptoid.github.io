@@ -199,10 +199,6 @@
       });
       historyFilters.append(filter);
     });
-    const reloadHistoryButton = createElement("button", "cliptoid-history__action cliptoid-history__reload", "Reload");
-    reloadHistoryButton.type = "button";
-    reloadHistoryButton.addEventListener("click", renderHistory);
-    historyFilters.append(reloadHistoryButton);
 
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -233,19 +229,15 @@
       details.append(createElement("strong", "", entry.title || "TikTok video"));
       details.append(createElement("time", "", new Date(entry.downloadedAt).toLocaleString()));
       const controls = createElement("div", "cliptoid-history__item-actions");
-      const copyButton = createElement("button", "cliptoid-history__action", "Copy link");
+      const reloadButton = createElement("button", "cliptoid-history__action", "Reload");
       const deleteButton = createElement("button", "cliptoid-history__action", "Delete");
-      copyButton.type = deleteButton.type = "button";
-      copyButton.disabled = !entry.sourceUrl;
-      copyButton.addEventListener("click", async () => {
-        try {
-          await copyText(entry.sourceUrl);
-          copyButton.textContent = "Copied";
-          window.setTimeout(() => { copyButton.textContent = "Copy link"; }, 1400);
-        } catch {
-          copyButton.textContent = "Copy failed";
-          window.setTimeout(() => { copyButton.textContent = "Copy link"; }, 1400);
-        }
+      reloadButton.type = deleteButton.type = "button";
+      reloadButton.disabled = !entry.sourceUrl;
+      reloadButton.addEventListener("click", () => {
+        input.value = entry.sourceUrl;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+        form.requestSubmit(submit);
       });
       deleteButton.addEventListener("click", () => {
         try {
@@ -253,7 +245,7 @@
         } catch {}
         renderHistory();
       });
-      controls.append(copyButton, deleteButton);
+      controls.append(reloadButton, deleteButton);
       item.append(thumbnail, details, controls);
       historyList.append(item);
     });

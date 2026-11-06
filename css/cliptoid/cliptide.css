@@ -1873,10 +1873,6 @@ body#sss_body .cliptoid-history__filters {
   margin: 1.25rem 0 .5rem;
 }
 
-body#sss_body .cliptoid-history__reload {
-  margin-left: auto;
-}
-
 body#sss_body .cliptoid-celebration {
   position: fixed;
   inset: 0;

@@ -10,7 +10,32 @@
   let shareRow = document.querySelector(".cliptide-share-row");
   const apiUrl = "https://www.tikwm.com/api/";
   const mediaHostPattern = /\.tiktokcdn(?:-[a-z]{2})?\.com$/i;
+  const historyStorageKey = "cliptoid.downloadHistory.v1";
+  const activityStorageKey = "cliptoid.activityStreak.v1";
   let isLoading = false;
+
+  const getLocalDay = (date = new Date()) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+  const markActiveDay = () => {
+    try {
+      const today = getLocalDay();
+      const activity = JSON.parse(localStorage.getItem(activityStorageKey) || "null") || {};
+      if (activity.lastDay === today) return activity;
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const previousStreak = Number.isSafeInteger(activity.streak) && activity.streak > 0 ? activity.streak : 0;
+      const streak = activity.lastDay === getLocalDay(yesterday) ? previousStreak + 1 : 1;
+      const updatedActivity = { streak, lastDay: today };
+      localStorage.setItem(activityStorageKey, JSON.stringify(updatedActivity));
+      return updatedActivity;
+    } catch {
+      return { streak: 0, lastDay: "" };
+    }
+  };
+
+  markActiveDay();
+  document.querySelectorAll(".cliptoid-related-links").forEach((section) => section.remove());
 
   const createElement = (tag, className, text) => {
     const element = document.createElement(tag);
@@ -90,6 +115,132 @@
   };
 
   if (!form || !input || !submit || !target) return;
+
+  let selectedHistoryDays = 7;
+  const historyPanel = createElement("section", "cliptoid-history");
+  historyPanel.setAttribute("aria-labelledby", "cliptoid-history-title");
+  const historyHeader = createElement("div", "cliptoid-history__header");
+  const historyHeading = createElement("h2", "", "Your activity");
+  historyHeading.id = "cliptoid-history-title";
+  const streakLabel = createElement("p", "cliptoid-history__streak");
+  const historyActions = createElement("div", "cliptoid-history__actions");
+  const reloadHistoryButton = createElement("button", "cliptoid-history__action", "Reload");
+  const clearHistoryButton = createElement("button", "cliptoid-history__action", "Clear history");
+  reloadHistoryButton.type = clearHistoryButton.type = "button";
+  historyActions.append(reloadHistoryButton, clearHistoryButton);
+  historyHeader.append(historyHeading, streakLabel, historyActions);
+
+  const historyFilters = createElement("div", "cliptoid-history__filters");
+  historyFilters.setAttribute("role", "group");
+  historyFilters.setAttribute("aria-label", "Filter download history by date");
+  const historyList = createElement("ul", "cliptoid-history__list");
+  historyPanel.append(historyHeader, historyFilters, historyList);
+
+  const readDownloadHistory = () => {
+    try {
+      const history = JSON.parse(localStorage.getItem(historyStorageKey) || "[]");
+      return Array.isArray(history) ? history : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const renderHistory = () => {
+    const activity = (() => {
+      try {
+        return JSON.parse(localStorage.getItem(activityStorageKey) || "null") || { streak: 0 };
+      } catch {
+        return { streak: 0 };
+      }
+    })();
+    streakLabel.textContent = `Download streak: ${activity.streak || 0} ${(activity.streak || 0) === 1 ? "day" : "days"}`;
+    historyFilters.replaceChildren();
+    [1, 7, 30].forEach((days) => {
+      const filter = createElement("button", "cliptoid-history__filter", `${days} day${days === 1 ? "" : "s"}`);
+      filter.type = "button";
+      filter.setAttribute("aria-pressed", String(selectedHistoryDays === days));
+      filter.addEventListener("click", () => {
+        selectedHistoryDays = days;
+        renderHistory();
+      });
+      historyFilters.append(filter);
+    });
+
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - selectedHistoryDays + 1);
+    const recentHistory = readDownloadHistory().filter((entry) => {
+      const timestamp = Date.parse(entry.downloadedAt);
+      return Number.isFinite(timestamp) && timestamp >= start.getTime();
+    });
+    historyList.replaceChildren();
+    if (!recentHistory.length) {
+      historyList.append(createElement("li", "cliptoid-history__empty", "No downloads in this period."));
+      return;
+    }
+
+    recentHistory.forEach((entry) => {
+      const item = createElement("li", "cliptoid-history__item");
+      const details = createElement("div", "cliptoid-history__details");
+      details.append(createElement("strong", "", entry.title || "TikTok download"));
+      details.append(createElement("time", "", new Date(entry.downloadedAt).toLocaleString()));
+      const controls = createElement("div", "cliptoid-history__item-actions");
+      const copyButton = createElement("button", "cliptoid-history__action", "Copy link");
+      const deleteButton = createElement("button", "cliptoid-history__action", "Delete");
+      copyButton.type = deleteButton.type = "button";
+      copyButton.disabled = !entry.sourceUrl;
+      copyButton.addEventListener("click", async () => {
+        try {
+          await copyText(entry.sourceUrl);
+          copyButton.textContent = "Copied";
+          window.setTimeout(() => { copyButton.textContent = "Copy link"; }, 1400);
+        } catch {
+          copyButton.textContent = "Copy failed";
+          window.setTimeout(() => { copyButton.textContent = "Copy link"; }, 1400);
+        }
+      });
+      deleteButton.addEventListener("click", () => {
+        try {
+          localStorage.setItem(historyStorageKey, JSON.stringify(readDownloadHistory().filter((savedEntry) => savedEntry.id !== entry.id)));
+        } catch {}
+        renderHistory();
+      });
+      controls.append(copyButton, deleteButton);
+      item.append(details, controls);
+      historyList.append(item);
+    });
+  };
+
+  reloadHistoryButton.addEventListener("click", renderHistory);
+  clearHistoryButton.addEventListener("click", () => {
+    if (!readDownloadHistory().length || !window.confirm("Clear all download history?")) return;
+    try {
+      localStorage.removeItem(historyStorageKey);
+    } catch {}
+    renderHistory();
+  });
+  const toolSection = target.closest("section");
+  const featureSection = toolSection?.nextElementSibling?.matches("section.content")
+    ? toolSection.nextElementSibling
+    : null;
+  (featureSection || target).after(historyPanel);
+  renderHistory();
+
+  const saveDownloadHistory = (filename, sourceUrl) => {
+    markActiveDay();
+    const submittedUrl = sourceUrl.trim();
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: filename,
+      sourceUrl: isTikTokUrl(submittedUrl) ? (/^https:\/\//i.test(submittedUrl) ? submittedUrl : `https://${submittedUrl}`) : "",
+      downloadedAt: new Date().toISOString(),
+    };
+    try {
+      const history = [entry, ...readDownloadHistory()].slice(0, 100);
+      localStorage.setItem(historyStorageKey, JSON.stringify(history));
+    } catch {}
+    renderHistory();
+  };
 
   const inputSpinner = createElement("span", "cliptide-input-spinner");
   inputSpinner.setAttribute("role", "status");
@@ -259,6 +410,7 @@
   const addDownloadLink = (parent, url, label, filename, variant = "") => {
     const safeUrl = safeMediaUrl(url);
     if (!safeUrl) return false;
+    const sourcePostUrl = input.value.trim();
     const button = createElement(
       "button",
       `cliptide-button cliptide-download${variant ? ` cliptide-download--${variant}` : ""}`,
@@ -341,6 +493,7 @@
         downloadLink.click();
         downloadLink.remove();
         window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        saveDownloadHistory(filename, sourcePostUrl);
         status.textContent = "Your download has started.";
         setButtonLabel(button, "Download started");
         window.setTimeout(() => {

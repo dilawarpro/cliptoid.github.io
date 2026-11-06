@@ -126,6 +126,16 @@ body {
   box-sizing: border-box;
 }
 
+@media (min-width: 768px) {
+  #mailform #submit {
+    position: static !important;
+    display: block;
+    float: none;
+    clear: both;
+    margin: .75rem 0 0 !important;
+  }
+}
+
 #submit.bi-lightning-charge-fill,
 #submit .bi-lightning-charge-fill {
   align-items: center;

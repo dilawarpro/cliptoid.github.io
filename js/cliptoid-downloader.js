@@ -141,7 +141,7 @@
   const historyPanel = createElement("section", "cliptoid-history");
   historyPanel.setAttribute("aria-labelledby", "cliptoid-history-title");
   const historyHeader = createElement("div", "cliptoid-history__header");
-  const historyHeading = createElement("h2", "", "Your activity");
+  const historyHeading = createElement("h2", "", "Recent Downloads");
   historyHeading.id = "cliptoid-history-title";
   const streakLabel = createElement("p", "cliptoid-history__streak");
   const streakHint = createElement(

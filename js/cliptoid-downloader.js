@@ -93,9 +93,7 @@
         paths: ["M12 3v10m0 0 4-4m-4 4-4-4M4 15v5h16v-5"],
       },
       audio: {
-        viewBox: "0 0 16 16",
-        filled: true,
-        paths: ["M9 13.5V2l7-1.5v11M9 13.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Zm7-2a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z"],
+        paths: ["M11 5 6 9H3v6h3l5 4V5Z", "M15.5 8.5a5 5 0 0 1 0 7", "M19 5a10 10 0 0 1 0 14"],
       },
       download: {
         paths: ["M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"],
@@ -104,10 +102,13 @@
         paths: ["M8 8V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3", "M5 8h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"],
       },
       trash: {
-        paths: ["M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"],
+        paths: ["M3 6h18", "M8 6V4h8v2", "m19 6-1 14H6L5 6", "M10 11v6", "M14 11v6"],
       },
       reload: {
-        paths: ["M20 7v5h-5M4 17v-5h5", "M5.5 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.5-3"],
+        paths: ["M20 11a8 8 0 1 0 2 5", "M20 4v7h-7"],
+      },
+      repeat: {
+        paths: ["m17 2 4 4-4 4", "M3 11V9a3 3 0 0 1 3-3h15", "m7 22-4-4 4-4", "M21 13v2a3 3 0 0 1-3 3H3"],
       },
     };
     const definition = iconDefinitions[name] || iconDefinitions.install;
@@ -333,7 +334,100 @@
     }
   };
 
+  const startConfettiAnimation = (canvas) => {
+    const context = canvas.getContext("2d");
+    if (!context || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return () => {};
+
+    const colors = ["#00D2A8", "#00A6FB", "#635BFF", "#f97316", "#fde047"];
+    let particles = [];
+    let frame = 0;
+    let running = true;
+    const timers = [];
+    const resize = () => {
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * ratio;
+      canvas.height = window.innerHeight * ratio;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    };
+    const burst = (originX, count) => {
+      for (let index = 0; index < count; index += 1) {
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.9;
+        const speed = 6 + Math.random() * 12;
+        particles.push({
+          x: originX,
+          y: window.innerHeight * 0.65,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          size: 5 + Math.random() * 9,
+          rotation: Math.random() * Math.PI,
+          spin: (Math.random() - 0.5) * 0.55,
+          age: 0,
+          shape: Math.random() > 0.72 ? "circle" : "rect",
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+    };
+    const tick = () => {
+      if (!running) return;
+      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      particles = particles.filter((particle) => particle.y < window.innerHeight + 30 && particle.age < 260);
+      particles.forEach((particle) => {
+        particle.age += 1;
+        particle.vx = particle.vx * 0.992 + Math.sin(particle.age / 14) * 0.035;
+        particle.vy = particle.vy * 0.997 + 0.16;
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.rotation += particle.spin;
+        context.save();
+        context.translate(particle.x, particle.y);
+        context.rotate(particle.rotation);
+        context.fillStyle = particle.color;
+        if (particle.shape === "circle") {
+          context.beginPath();
+          context.arc(0, 0, particle.size / 2, 0, Math.PI * 2);
+          context.fill();
+        } else {
+          context.fillRect(-particle.size / 2, -particle.size / 3, particle.size, particle.size * 0.66);
+        }
+        context.restore();
+      });
+      frame = particles.length ? window.requestAnimationFrame(tick) : 0;
+    };
+    const scheduleTick = () => {
+      if (!frame && running) frame = window.requestAnimationFrame(tick);
+    };
+
+    resize();
+    window.addEventListener("resize", resize, { passive: true });
+    burst(window.innerWidth * 0.3, 90);
+    burst(window.innerWidth * 0.7, 90);
+    scheduleTick();
+    timers.push(window.setTimeout(() => {
+      burst(window.innerWidth * 0.5, 150);
+      scheduleTick();
+    }, 350));
+    timers.push(window.setInterval(() => {
+      burst(window.innerWidth * (0.18 + Math.random() * 0.64), 38);
+      scheduleTick();
+    }, 950));
+
+    return () => {
+      running = false;
+      window.cancelAnimationFrame(frame);
+      timers.forEach((timer) => {
+        window.clearTimeout(timer);
+        window.clearInterval(timer);
+      });
+      window.removeEventListener("resize", resize);
+      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    };
+  };
+
   const showFirstDownloadToast = () => {
+    const canvas = createElement("canvas", "cliptoid-first-download-toast__confetti");
+    canvas.setAttribute("aria-hidden", "true");
+    document.body.append(canvas);
+    const stopConfetti = startConfettiAnimation(canvas);
     const toast = createElement("div", "cliptoid-first-download-toast");
     toast.setAttribute("role", "status");
     toast.setAttribute("aria-live", "polite");
@@ -343,6 +437,8 @@
     toast.append(cancelButton);
     const dismiss = () => {
       window.clearTimeout(timer);
+      stopConfetti();
+      canvas.remove();
       toast.remove();
     };
     cancelButton.addEventListener("click", dismiss);
@@ -385,85 +481,11 @@
     overlay.append(canvas, card);
     document.body.append(overlay);
 
-    const context = canvas.getContext("2d");
-    const colors = ["#00D2A8", "#00A6FB", "#635BFF", "#f97316", "#fde047"];
-    let particles = [];
-    let frame = 0;
-    const resize = () => {
-      const ratio = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * ratio;
-      canvas.height = window.innerHeight * ratio;
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
-    };
-    const burst = (originX, count) => {
-      for (let index = 0; index < count; index += 1) {
-        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.9;
-        const speed = 6 + Math.random() * 12;
-        particles.push({
-          x: originX,
-          y: window.innerHeight * 0.65,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          size: 5 + Math.random() * 9,
-          rotation: Math.random() * Math.PI,
-          spin: (Math.random() - 0.5) * 0.55,
-          age: 0,
-          shape: Math.random() > 0.72 ? "circle" : "rect",
-          color: colors[Math.floor(Math.random() * colors.length)],
-        });
-      }
-    };
-    const tick = () => {
-      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
-      particles = particles.filter((particle) => particle.y < window.innerHeight + 30 && particle.age < 260);
-      particles.forEach((particle) => {
-        particle.age += 1;
-        particle.vx = particle.vx * 0.992 + Math.sin(particle.age / 14) * 0.035;
-        particle.vy = particle.vy * 0.997 + 0.16;
-        particle.x += particle.vx;
-        particle.y += particle.vy;
-        particle.rotation += particle.spin;
-        context.save();
-        context.translate(particle.x, particle.y);
-        context.rotate(particle.rotation);
-        context.fillStyle = particle.color;
-        if (particle.shape === "circle") {
-          context.beginPath();
-          context.arc(0, 0, particle.size / 2, 0, Math.PI * 2);
-          context.fill();
-        } else {
-          context.fillRect(-particle.size / 2, -particle.size / 3, particle.size, particle.size * 0.66);
-        }
-        context.restore();
-      });
-      if (particles.length) frame = window.requestAnimationFrame(tick);
-      else frame = 0;
-    };
-    const burstTimers = [];
-    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      resize();
-      window.addEventListener("resize", resize, { passive: true });
-      burst(window.innerWidth * 0.3, 90);
-      burst(window.innerWidth * 0.7, 90);
-      frame = window.requestAnimationFrame(tick);
-      burstTimers.push(window.setTimeout(() => {
-        burst(window.innerWidth * 0.5, 150);
-        frame = window.requestAnimationFrame(tick);
-      }, 350));
-      burstTimers.push(window.setInterval(() => {
-        burst(window.innerWidth * (0.18 + Math.random() * 0.64), 38);
-        if (!frame) frame = window.requestAnimationFrame(tick);
-      }, 950));
-    }
+    const stopConfetti = startConfettiAnimation(canvas);
 
     const focusable = [dismissButton, closeButton];
     const close = () => {
-      window.cancelAnimationFrame(frame);
-      burstTimers.forEach((timer) => {
-        window.clearTimeout(timer);
-        window.clearInterval(timer);
-      });
-      window.removeEventListener("resize", resize);
+      stopConfetti();
       document.removeEventListener("keydown", onKeydown);
       overlay.remove();
       celebrationOpen = false;
@@ -722,16 +744,8 @@
       setButtonLabel(button, `Starting ${mediaType}…`);
       const downloadController = new AbortController();
       const downloadTimeout = window.setTimeout(() => downloadController.abort(), 120000);
-      let writable = null;
 
       try {
-        if (typeof window.showSaveFilePicker === "function") {
-          const handle = await window.showSaveFilePicker({
-            suggestedName: filename,
-            types: [{ description: `${mediaType[0].toUpperCase()}${mediaType.slice(1)} file`, accept: { [mimeByExtension[extension] || "application/octet-stream"]: [`.${extension}`] } }],
-          });
-          writable = await handle.createWritable();
-        }
         const response = await fetch(safeUrl, {
           method: "GET",
           mode: "cors",
@@ -765,8 +779,7 @@
             await reader.cancel();
             throw new Error("This file is too large to download safely in your browser.");
           }
-          if (writable) await writable.write(value);
-          else chunks.push(value);
+          chunks.push(value);
           if (declaredLength > 0) {
             const progress = Math.min(99, Math.round((receivedLength / declaredLength) * 100));
             status.textContent = `Downloading ${mediaType}… ${progress}%`;
@@ -776,22 +789,17 @@
         if (!receivedLength) throw new Error("The media server returned an empty file.");
         window.clearTimeout(downloadTimeout);
 
-        if (writable) {
-          await writable.close();
-          writable = null;
-        } else {
-          const blob = new Blob(chunks, { type: contentType });
-          const blobUrl = URL.createObjectURL(blob);
-          const downloadLink = createElement("a");
-          downloadLink.href = blobUrl;
-          downloadLink.download = filename;
-          downloadLink.style.position = "fixed";
-          downloadLink.style.left = "-10000px";
-          document.body.append(downloadLink);
-          downloadLink.click();
-          downloadLink.remove();
-          window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-        }
+        const blob = new Blob(chunks, { type: contentType });
+        const blobUrl = URL.createObjectURL(blob);
+        const downloadLink = createElement("a");
+        downloadLink.href = blobUrl;
+        downloadLink.download = filename;
+        downloadLink.style.position = "fixed";
+        downloadLink.style.left = "-10000px";
+        document.body.append(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
         saveDownloadHistory(resultInfo, sourcePostUrl);
         status.textContent = "Your download has started.";
         setButtonLabel(button, "Download started");
@@ -803,9 +811,6 @@
         return;
       } catch (error) {
         window.clearTimeout(downloadTimeout);
-        if (writable) {
-          try { await writable.abort(); } catch {}
-        }
         status.textContent =
           error.name === "AbortError"
             ? "Download cancelled."
@@ -849,19 +854,10 @@
       if (!status.isConnected) parent.after(status);
       setButtonLabel(button, "Starting video…");
 
-      let writable = null;
       let audioContext = null;
       let recorder;
       let stream;
       try {
-        if (typeof window.showSaveFilePicker === "function") {
-          const handle = await window.showSaveFilePicker({
-            suggestedName: filename,
-            types: [{ description: "Slideshow video", accept: { [mimeType.split(";")[0]]: [`.${extension}`] } }],
-          });
-          writable = await handle.createWritable();
-        }
-
         const canvas = createElement("canvas");
         canvas.width = 720;
         canvas.height = 1280;
@@ -888,13 +884,11 @@
         }
 
         const chunks = [];
-        let writeQueue = Promise.resolve();
         recorder = new MediaRecorder(stream, { mimeType });
         const recordingFinished = new Promise((resolve, reject) => {
           recorder.addEventListener("dataavailable", (event) => {
             if (!event.data.size) return;
-            if (writable) writeQueue = writeQueue.then(() => writable.write(event.data));
-            else chunks.push(event.data);
+            chunks.push(event.data);
           });
           recorder.addEventListener("error", () => reject(new Error("The browser could not encode this slideshow.")), { once: true });
           recorder.addEventListener("stop", resolve, { once: true });
@@ -917,31 +911,22 @@
         }
         recorder.stop();
         await recordingFinished;
-        await writeQueue;
-        if (writable) {
-          await writable.close();
-          writable = null;
-        } else {
-          const blob = new Blob(chunks, { type: mimeType });
-          const blobUrl = URL.createObjectURL(blob);
-          const downloadLink = createElement("a");
-          downloadLink.href = blobUrl;
-          downloadLink.download = filename;
-          downloadLink.style.position = "fixed";
-          downloadLink.style.left = "-10000px";
-          document.body.append(downloadLink);
-          downloadLink.click();
-          downloadLink.remove();
-          window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-        }
+        const blob = new Blob(chunks, { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        const downloadLink = createElement("a");
+        downloadLink.href = blobUrl;
+        downloadLink.download = filename;
+        downloadLink.style.position = "fixed";
+        downloadLink.style.left = "-10000px";
+        document.body.append(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
         saveDownloadHistory({ ...currentResult, title }, input.value.trim());
         status.textContent = `Your slideshow video download has started.${extension === "webm" ? " This browser generated WebM instead of MP4." : ""}`;
         setButtonLabel(button, "Download started");
       } catch (error) {
         if (recorder?.state === "recording") recorder.stop();
-        if (writable) {
-          try { await writable.abort(); } catch {}
-        }
         status.textContent = error.name === "AbortError" ? "Download cancelled." : error.message || "Could not create the slideshow video.";
         setButtonLabel(button, "Download Slideshow Video");
         button.disabled = false;
@@ -1160,6 +1145,7 @@
         "Download another video"
       );
       anotherButton.type = "button";
+      addButtonIcon(anotherButton, "repeat");
       anotherButton.addEventListener("click", () => {
         target.replaceChildren();
         input.value = "";

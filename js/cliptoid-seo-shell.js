@@ -37,7 +37,7 @@
     ["Downloader guide", "/tiktok-download-guide.html"],
     ["TikTok MP3", "/download-tiktok-mp3.html"],
     ["Slideshow images", "/download-tiktok-stories.html"],
-    ["Help", "/tiktok-download-not-working.html"],
+    ["Help", "/troubleshooting/"],
     ["Compare tools", "/cliptoid-vs-snaptik.html"],
     ["Updates", "/changelog.html"],
   ].forEach(([label, href]) => {

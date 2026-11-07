@@ -940,7 +940,7 @@
     return true;
   };
 
-  const addSlideshowVideoLink = (parent, imageUrls, audioUrl, title) => {
+  const addSlideshowVideoLink = (parent, imageUrls, audioUrl, title, postDurationSeconds = 0) => {
     if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return false;
     const supportedTypes = [
       "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
@@ -969,8 +969,11 @@
       setButtonLabel(button, "Starting video…");
 
       let audioContext = null;
+      let audioSource = null;
+      let audioDurationSeconds = 0;
       let recorder;
       let stream;
+      const slideBitmaps = [];
       try {
         const canvas = createElement("canvas");
         canvas.width = 720;
@@ -984,12 +987,12 @@
             const audioResponse = await fetch(audioUrl, { mode: "cors", credentials: "omit" });
             if (audioResponse.ok) {
               const audioBuffer = await audioContext.decodeAudioData(await audioResponse.arrayBuffer());
+              audioDurationSeconds = audioBuffer.duration;
               const audioDestination = audioContext.createMediaStreamDestination();
-              const audioSource = audioContext.createBufferSource();
+              audioSource = audioContext.createBufferSource();
               audioSource.buffer = audioBuffer;
               audioSource.connect(audioDestination);
               audioDestination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
-              audioSource.start();
             }
           } catch {
             if (audioContext) await audioContext.close().catch(() => {});
@@ -997,6 +1000,30 @@
           }
         }
 
+        let receivedImageBytes = 0;
+        const maxSlideshowBytes = 150 * 1024 * 1024;
+        for (let index = 0; index < imageUrls.length; index += 1) {
+          const response = await fetch(imageUrls[index], { mode: "cors", credentials: "omit" });
+          if (!response.ok) throw new Error("A slideshow image could not be loaded.");
+          const imageBlob = await response.blob();
+          receivedImageBytes += imageBlob.size;
+          if (receivedImageBytes > maxSlideshowBytes) {
+            throw new Error("These slideshow images are too large to combine safely in your browser.");
+          }
+          slideBitmaps.push(await createImageBitmap(imageBlob));
+          status.textContent = `Loading slideshow images… ${index + 1}/${imageUrls.length}`;
+          setButtonLabel(button, `Loading… ${index + 1}/${imageUrls.length}`);
+        }
+
+        const postDuration = Number(postDurationSeconds);
+        const validPostDuration = Number.isFinite(postDuration) && postDuration > 0 && postDuration <= 600;
+        const validAudioDuration = Number.isFinite(audioDurationSeconds) && audioDurationSeconds > 0 && audioDurationSeconds <= 600;
+        const totalDurationSeconds = validAudioDuration
+          ? audioDurationSeconds
+          : validPostDuration
+            ? postDuration
+            : imageUrls.length * 2.2;
+        const slideDurationMs = (totalDurationSeconds * 1000) / slideBitmaps.length;
         const chunks = [];
         recorder = new MediaRecorder(stream, { mimeType });
         const recordingFinished = new Promise((resolve, reject) => {
@@ -1007,21 +1034,22 @@
           recorder.addEventListener("error", () => reject(new Error("The browser could not encode this slideshow.")), { once: true });
           recorder.addEventListener("stop", resolve, { once: true });
         });
-        recorder.start(500);
-        for (let index = 0; index < imageUrls.length; index += 1) {
-          const response = await fetch(imageUrls[index], { mode: "cors", credentials: "omit" });
-          if (!response.ok) throw new Error("A slideshow image could not be loaded.");
-          const bitmap = await createImageBitmap(await response.blob());
+        const drawSlide = (bitmap) => {
           context.fillStyle = "#000";
           context.fillRect(0, 0, canvas.width, canvas.height);
           const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
           const width = bitmap.width * scale;
           const height = bitmap.height * scale;
           context.drawImage(bitmap, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-          bitmap.close?.();
+        };
+        drawSlide(slideBitmaps[0]);
+        recorder.start(500);
+        audioSource?.start();
+        for (let index = 0; index < slideBitmaps.length; index += 1) {
+          if (index > 0) drawSlide(slideBitmaps[index]);
           status.textContent = `Rendering slideshow video… ${index + 1}/${imageUrls.length}`;
           setButtonLabel(button, `Rendering… ${index + 1}/${imageUrls.length}`);
-          await new Promise((resolve) => window.setTimeout(resolve, 2200));
+          await new Promise((resolve) => window.setTimeout(resolve, slideDurationMs));
         }
         recorder.stop();
         await recordingFinished;
@@ -1046,6 +1074,7 @@
         button.disabled = false;
         button.removeAttribute("aria-busy");
       } finally {
+        slideBitmaps.forEach((bitmap) => bitmap.close?.());
         stream?.getTracks().forEach((track) => track.stop());
         if (audioContext) await audioContext.close().catch(() => {});
       }
@@ -1228,7 +1257,7 @@
     if (soundOnly) {
       addDownloadLink(downloads, audioUrl, "Download Sound MP3", getDownloadFilename(title || "TikTok-sound", "mp3"));
     } else if (slideshowImages.length) {
-      if (!addSlideshowVideoLink(downloads, slideshowImages, audioUrl, title || "TikTok-slideshow")) {
+      if (!addSlideshowVideoLink(downloads, slideshowImages, audioUrl, title || "TikTok-slideshow", data.duration)) {
         downloads.append(createElement("p", "cliptide-status cliptide-status--info", "Slideshow video creation is not supported by this browser. You can still download each image and the audio."));
       }
     } else {

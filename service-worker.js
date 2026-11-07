@@ -29,18 +29,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => /^(cliptide|cliptoid)-shell-/.test(key) && key !== CACHE_NAME)
-            .map((key) => caches.delete(key))
-        )
-      )
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil(self.clients.claim());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -48,13 +37,23 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .catch(async () => (await caches.match(request)) || (await caches.match("/index.html")))
-    );
-    return;
-  }
-
-  event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
+  const cacheableRequest = request.mode === "navigate" || ["script", "style", "image", "font", "manifest"].includes(request.destination);
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    try {
+      const response = await fetch(request, { cache: "no-cache" });
+      if (cacheableRequest && response.ok && response.type === "basic") {
+        try {
+          await cache.put(request, response.clone());
+        } catch {}
+      }
+      return response;
+    } catch {
+      const cachedResponse =
+        (await cache.match(request)) ||
+        (await cache.match(`${url.origin}${url.pathname}`)) ||
+        (request.mode === "navigate" ? await cache.match("/index.html") : null);
+      return cachedResponse || Response.error();
+    }
+  })());
 });

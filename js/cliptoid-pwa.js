@@ -119,8 +119,105 @@
       location.hostname === "localhost" ||
       location.hostname === "127.0.0.1");
   if (serviceWorkerSupported) {
-    navigator.serviceWorker.register("/service-worker.js").catch((error) => {
-      console.error("Cliptoid offline setup failed:", error);
+    let hasControlledPage = Boolean(navigator.serviceWorker.controller);
+    let refreshing = false;
+    let waitingToReload = false;
+    const reloadAfterCurrentWork = () => {
+      if (refreshing) return;
+      if (document.querySelector('[aria-busy="true"], form.htmx-request')) {
+        if (!waitingToReload) {
+          waitingToReload = true;
+          window.setTimeout(() => {
+            waitingToReload = false;
+            reloadAfterCurrentWork();
+          }, 1000);
+        }
+        return;
+      }
+      const input = document.querySelector("#main_page_text");
+      if (input?.value) {
+        try {
+          sessionStorage.setItem("cliptoid.pendingUpdateInput", input.value);
+        } catch {}
+      }
+      refreshing = true;
+      window.location.reload();
+    };
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hasControlledPage) {
+        hasControlledPage = true;
+        return;
+      }
+      if (!refreshing) reloadAfterCurrentWork();
     });
+
+    navigator.serviceWorker.register("/service-worker.js", { updateViaCache: "none" })
+      .then((registration) => {
+        const checkForUpdates = () => registration.update().catch(() => {});
+        const fingerprints = new Map();
+        let fingerprintsReady = false;
+        let checkingContent = false;
+        const checkForContentChanges = async () => {
+          if (checkingContent || !navigator.onLine || !window.crypto?.subtle) return;
+          checkingContent = true;
+          try {
+            const resources = new Set([new URL(location.pathname, location.origin).href]);
+            document.querySelectorAll("script[src], link[rel~='stylesheet'][href]").forEach((element) => {
+              const resourceUrl = new URL(element.src || element.href, location.href);
+              if (resourceUrl.origin === location.origin) resources.add(resourceUrl.href);
+            });
+            const results = await Promise.all([...resources].map(async (resourceUrl) => {
+              try {
+                const response = await fetch(resourceUrl, { cache: "no-cache", credentials: "same-origin" });
+                if (!response.ok) return null;
+                const digest = await window.crypto.subtle.digest("SHA-256", await response.arrayBuffer());
+                const fingerprint = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+                return [resourceUrl, fingerprint];
+              } catch {
+                return null;
+              }
+            }));
+            const validResults = results.filter(Boolean);
+            const hasChanged = fingerprintsReady && validResults.some(([resourceUrl, fingerprint]) =>
+              fingerprints.has(resourceUrl) && fingerprints.get(resourceUrl) !== fingerprint
+            );
+            validResults.forEach(([resourceUrl, fingerprint]) => fingerprints.set(resourceUrl, fingerprint));
+            fingerprintsReady = true;
+            if (hasChanged) reloadAfterCurrentWork();
+          } finally {
+            checkingContent = false;
+          }
+        };
+
+        checkForUpdates();
+        checkForContentChanges();
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) {
+            checkForUpdates();
+            checkForContentChanges();
+          }
+        });
+        window.addEventListener("online", checkForContentChanges);
+        window.setInterval(() => {
+          checkForUpdates();
+          checkForContentChanges();
+        }, 5 * 60 * 1000);
+      })
+      .catch((error) => {
+        console.error("Cliptoid offline setup failed:", error);
+      });
+
+    try {
+      const pendingInput = sessionStorage.getItem("cliptoid.pendingUpdateInput");
+      if (pendingInput) {
+        sessionStorage.removeItem("cliptoid.pendingUpdateInput");
+        const input = document.querySelector("#main_page_text");
+        if (input) {
+          input.value = pendingInput;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+    } catch {}
   }
 })();

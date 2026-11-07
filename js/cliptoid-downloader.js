@@ -171,6 +171,86 @@
     else button.textContent = label;
   };
 
+  const applicationUrl = new URL(window.location.href);
+  applicationUrl.search = "";
+  applicationUrl.hash = "";
+  let hasSoftwareApplication = false;
+  document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+    try {
+      const schema = JSON.parse(script.textContent);
+      const entries = Array.isArray(schema["@graph"]) ? schema["@graph"] : [schema];
+      entries.forEach((entry) => {
+        if (entry["@type"] === "WebApplication") entry["@type"] = "SoftwareApplication";
+        if (entry["@type"] === "SoftwareApplication") hasSoftwareApplication = true;
+      });
+      script.textContent = JSON.stringify(schema);
+    } catch {}
+  });
+  if (!hasSoftwareApplication) {
+    const applicationSchema = createElement("script");
+    applicationSchema.type = "application/ld+json";
+    applicationSchema.textContent = JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "@id": `${applicationUrl.href}#softwareapplication`,
+      name: `${document.title.split("|")[0].trim()} | Cliptoid`,
+      url: applicationUrl.href,
+      applicationCategory: "MultimediaApplication",
+      operatingSystem: "Any",
+      isAccessibleForFree: true,
+      description: document.querySelector('meta[name="description"]')?.content || "A browser-based TikTok link tool.",
+    });
+    document.head.append(applicationSchema);
+  }
+
+  const faqDetails = [...document.querySelectorAll("main details")];
+  const hasFaqSchema = [...document.querySelectorAll('script[type="application/ld+json"]')]
+    .some((script) => script.textContent.includes('"FAQPage"'));
+  if (faqDetails.length && !hasFaqSchema && !document.querySelector('[itemtype="https://schema.org/FAQPage"]')) {
+    const mainEntity = faqDetails.map((details) => {
+      const summary = details.querySelector("summary");
+      const answer = details.cloneNode(true);
+      answer.querySelector("summary")?.remove();
+      return {
+        "@type": "Question",
+        name: summary?.textContent.trim() || "",
+        acceptedAnswer: { "@type": "Answer", text: answer.textContent.trim() },
+      };
+    }).filter((question) => question.name && question.acceptedAnswer.text);
+    if (mainEntity.length) {
+      const pageUrl = new URL(window.location.href);
+      pageUrl.search = "";
+      pageUrl.hash = "";
+      const schema = createElement("script");
+      schema.type = "application/ld+json";
+      schema.textContent = JSON.stringify({ "@context": "https://schema.org", "@type": "FAQPage", "@id": `${pageUrl.href}#faq`, mainEntity });
+      document.head.append(schema);
+    }
+  }
+
+  const hasHowToSchema = [...document.querySelectorAll('script[type="application/ld+json"]')]
+    .some((script) => script.textContent.includes('"HowTo"'));
+  const howToHeading = [...document.querySelectorAll("main h2, main h3")]
+    .find((heading) => /^how to\b/i.test(heading.textContent.trim()));
+  const howToList = howToHeading?.nextElementSibling;
+  if (!hasHowToSchema && howToHeading && howToList?.tagName === "OL") {
+    const steps = [...howToList.querySelectorAll(":scope > li")].map((item, index) => {
+      const text = item.textContent.trim();
+      return { "@type": "HowToStep", position: index + 1, name: text, text };
+    }).filter((step) => step.text);
+    if (steps.length > 1) {
+      const schema = createElement("script");
+      schema.type = "application/ld+json";
+      schema.textContent = JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        name: howToHeading.textContent.trim(),
+        step: steps,
+      });
+      document.head.append(schema);
+    }
+  }
+
   if (!form || !input || !submit || !target) return;
 
   let selectedHistoryDays = 7;
@@ -349,7 +429,7 @@
     let running = true;
     const timers = [];
     const resize = () => {
-      const ratio = window.devicePixelRatio || 1;
+      const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
       canvas.width = window.innerWidth * ratio;
       canvas.height = window.innerHeight * ratio;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -357,17 +437,19 @@
     const burst = (originX, count) => {
       for (let index = 0; index < count; index += 1) {
         const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.9;
-        const speed = 6 + Math.random() * 12;
+        const speed = 7 + Math.random() * 10;
+        const size = 5 + Math.random() * 8;
         particles.push({
           x: originX,
-          y: window.innerHeight * 0.65,
+          y: window.innerHeight * 0.72,
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
-          size: 5 + Math.random() * 9,
+          size,
+          width: size * (1.2 + Math.random() * 1.8),
           rotation: Math.random() * Math.PI,
-          spin: (Math.random() - 0.5) * 0.55,
+          spin: (Math.random() - 0.5) * 0.42,
           age: 0,
-          shape: Math.random() > 0.72 ? "circle" : "rect",
+          shape: Math.random() > 0.78 ? "circle" : Math.random() > 0.52 ? "ribbon" : "rect",
           color: colors[Math.floor(Math.random() * colors.length)],
         });
       }
@@ -375,24 +457,27 @@
     const tick = () => {
       if (!running) return;
       context.clearRect(0, 0, window.innerWidth, window.innerHeight);
-      particles = particles.filter((particle) => particle.y < window.innerHeight + 30 && particle.age < 260);
+      particles = particles.filter((particle) => particle.y < window.innerHeight + 30 && particle.age < 175);
       particles.forEach((particle) => {
         particle.age += 1;
-        particle.vx = particle.vx * 0.992 + Math.sin(particle.age / 14) * 0.035;
-        particle.vy = particle.vy * 0.997 + 0.16;
+        particle.vx = particle.vx * 0.994 + Math.sin(particle.age / 15) * 0.045;
+        particle.vy = particle.vy * 0.997 + 0.18;
         particle.x += particle.vx;
         particle.y += particle.vy;
         particle.rotation += particle.spin;
         context.save();
         context.translate(particle.x, particle.y);
         context.rotate(particle.rotation);
+        context.globalAlpha = Math.max(0, 1 - particle.age / 175);
         context.fillStyle = particle.color;
         if (particle.shape === "circle") {
           context.beginPath();
           context.arc(0, 0, particle.size / 2, 0, Math.PI * 2);
           context.fill();
+        } else if (particle.shape === "ribbon") {
+          context.fillRect(-particle.width / 2, -particle.size / 5, particle.width, particle.size * 0.4);
         } else {
-          context.fillRect(-particle.size / 2, -particle.size / 3, particle.size, particle.size * 0.66);
+          context.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
         }
         context.restore();
       });
@@ -404,28 +489,32 @@
 
     resize();
     window.addEventListener("resize", resize, { passive: true });
-    burst(window.innerWidth * 0.3, 90);
-    burst(window.innerWidth * 0.7, 90);
+    const isSmallScreen = window.matchMedia("(max-width: 600px)").matches;
+    const sideBurstCount = isSmallScreen ? 38 : 76;
+    burst(window.innerWidth * 0.18, sideBurstCount);
+    burst(window.innerWidth * 0.82, sideBurstCount);
     scheduleTick();
     timers.push(window.setTimeout(() => {
-      burst(window.innerWidth * 0.5, 150);
+      burst(window.innerWidth * 0.5, isSmallScreen ? 58 : 112);
       scheduleTick();
-    }, 350));
-    timers.push(window.setInterval(() => {
-      burst(window.innerWidth * (0.18 + Math.random() * 0.64), 38);
+    }, 240));
+    timers.push(window.setTimeout(() => {
+      burst(window.innerWidth * 0.32, isSmallScreen ? 24 : 44);
+      burst(window.innerWidth * 0.68, isSmallScreen ? 24 : 44);
       scheduleTick();
-    }, 950));
+    }, 720));
+    timers.push(window.setTimeout(stopConfetti, 3100));
 
-    return () => {
+    function stopConfetti() {
+      if (!running) return;
       running = false;
       window.cancelAnimationFrame(frame);
-      timers.forEach((timer) => {
-        window.clearTimeout(timer);
-        window.clearInterval(timer);
-      });
+      timers.forEach((timer) => window.clearTimeout(timer));
       window.removeEventListener("resize", resize);
       context.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    };
+    }
+
+    return stopConfetti;
   };
 
   const showFirstDownloadToast = () => {

@@ -60,7 +60,7 @@
     }
   };
 
-  markActiveDay(1);
+  markActiveDay();
   document.querySelectorAll(".cliptoid-related-links").forEach((section) => section.remove());
 
   const createElement = (tag, className, text) => {
@@ -648,6 +648,15 @@
     );
   };
 
+  const isTikTokSoundUrl = (value) => {
+    try {
+      const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+      return /\/(?:music|sound)\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  };
+
   const getSharedTikTokUrl = () => {
     const params = new URLSearchParams(window.location.search);
     for (const sharedValue of params.values()) {
@@ -692,7 +701,15 @@
   };
 
   const getDownloadFilename = (title, extension) => {
-    const uniqueNumber = `${Date.now()}${String(Math.floor(Math.random() * 1000000)).padStart(6, "0")}`;
+    const digits = new Uint8Array(10);
+    try {
+      window.crypto.getRandomValues(digits);
+    } catch {
+      digits.forEach((value, index) => {
+        digits[index] = Math.floor(Math.random() * 256);
+      });
+    }
+    const uniqueNumber = `${digits[0] % 9 + 1}${Array.from(digits.slice(1), (digit) => digit % 10).join("")}`;
     return `cliptoid.com_${uniqueNumber}.${extension}`;
   };
 
@@ -765,6 +782,9 @@
         const contentType = response.headers.get("content-type")?.split(";")[0] || mimeByExtension[extension] || "application/octet-stream";
         if (mediaType === "video" && contentType.startsWith("audio/")) {
           throw new Error("The media service returned audio instead of a video. No mislabeled file was saved.");
+        }
+        if (isAudio && /^(video|image)\//i.test(contentType)) {
+          throw new Error("The media service returned non-audio content instead of a sound file.");
         }
 
         const declaredLength = Number(response.headers.get("content-length"));
@@ -1059,6 +1079,7 @@
     card.setAttribute("aria-label", "TikTok download results");
 
     const title = typeof data.title === "string" ? data.title.trim() : "";
+    const soundOnly = isTikTokSoundUrl(input.value);
     const slideshowImages = Array.isArray(data.images)
       ? data.images
           .map((image) => (typeof image === "string" ? image : image?.url))
@@ -1067,7 +1088,7 @@
       : [];
     const previewUrl = safeMediaUrl(data.cover || data.origin_cover || data.ai_dynamic_cover);
     currentResult = { title, cover: previewUrl || slideshowImages[0] || "" };
-    const videoUrl = safeMediaUrl(data.hdplay || data.play);
+    const videoUrl = soundOnly ? null : safeMediaUrl(data.hdplay || data.play);
     const creatorName =
       typeof data.author?.nickname === "string"
         ? data.author.nickname
@@ -1098,7 +1119,7 @@
       const preview = createElement("figure", "cliptide-preview");
       const image = createElement("img");
       image.src = previewUrl;
-      image.alt = videoUrl ? "TikTok video thumbnail" : "TikTok post preview";
+      image.alt = soundOnly ? "TikTok sound cover" : videoUrl ? "TikTok video thumbnail" : "TikTok post preview";
       image.loading = "lazy";
       preview.append(image);
       card.append(preview);
@@ -1114,8 +1135,10 @@
     const downloads = createElement("div", "cliptide-downloads");
     const playUrl = safeMediaUrl(data.play);
     const hdVideoUrl = safeMediaUrl(data.hdplay);
-    const audioUrl = safeMediaUrl(data.music || data.music_info?.play);
-    if (slideshowImages.length) {
+    const audioUrl = safeMediaUrl(data.music || data.music_info?.play || (soundOnly ? data.play : null));
+    if (soundOnly) {
+      addDownloadLink(downloads, audioUrl, "Download Sound MP3", getDownloadFilename(title || "TikTok-sound", "mp3"));
+    } else if (slideshowImages.length) {
       if (!addSlideshowVideoLink(downloads, slideshowImages, audioUrl, title || "TikTok-slideshow")) {
         downloads.append(createElement("p", "cliptide-status cliptide-status--info", "Slideshow video creation is not supported by this browser. You can still download each image and the audio."));
       }
@@ -1139,7 +1162,9 @@
         );
       }
     }
-    addDownloadLink(downloads, audioUrl, "Download Audio MP3", getDownloadFilename(title, "mp3"));
+    if (!soundOnly) {
+      addDownloadLink(downloads, audioUrl, "Download Audio MP3", getDownloadFilename(title, "mp3"));
+    }
     if (downloads.childElementCount) {
       const downloadSection = createElement("div", "cliptide-download-section");
       downloadSection.append(createElement("h3", "", "Download your content"));
@@ -1225,7 +1250,7 @@
       const normalizedUrl = /^https:\/\//i.test(sourceUrl)
         ? sourceUrl
         : `https://${sourceUrl}`;
-      markActiveDay(1);
+      markActiveDay();
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 25000);
       isLoading = true;

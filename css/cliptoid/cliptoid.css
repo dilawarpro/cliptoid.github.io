@@ -1805,9 +1805,10 @@ body#sss_body .cliptoid-history__points {
 }
 
 body#sss_body .cliptoid-history__points .cliptoid-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 1.15rem;
+  height: 1.15rem;
   color: #b7791f;
+  stroke-width: 1.6;
 }
 
 body#sss_body .cliptoid-flame {

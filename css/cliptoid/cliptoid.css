@@ -1793,12 +1793,21 @@ body#sss_body .cliptoid-history__streak-label {
 }
 
 body#sss_body .cliptoid-history__points {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
   margin-left: .3rem;
   padding-left: .65rem;
   color: #0f766e;
   font-size: .85rem;
   font-weight: 800;
   border-left: 1px solid currentColor;
+}
+
+body#sss_body .cliptoid-history__points .cliptoid-icon {
+  width: 1rem;
+  height: 1rem;
+  color: #b7791f;
 }
 
 body#sss_body .cliptoid-flame {

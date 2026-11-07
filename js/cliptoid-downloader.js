@@ -98,6 +98,9 @@
       download: {
         paths: ["M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"],
       },
+      coins: {
+        paths: ["M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3Z", "M4 5v4c0 1.7 3.6 3 8 3s8-1.3 8-3V5", "M4 9v4c0 1.7 3.6 3 8 3s8-1.3 8-3V9"],
+      },
       copy: {
         paths: ["M8 8V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3", "M5 8h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"],
       },
@@ -218,11 +221,13 @@
     const points = Number.isSafeInteger(activity.points) && activity.points >= 0 ? activity.points : 0;
     streakLabel.classList.toggle("is-active", streakDays > 0);
     streakLabel.setAttribute("aria-label", `${streakDays} ${historyCopy.streak}, ${points} ${historyCopy.points}`);
+    const pointsDisplay = createElement("span", "cliptoid-history__points");
+    pointsDisplay.append(createIcon("coins"), createElement("span", "", `${points} ${historyCopy.points}`));
     streakLabel.replaceChildren(
       createFlameIcon(),
       createElement("strong", "cliptoid-history__streak-count", String(streakDays)),
       createElement("span", "cliptoid-history__streak-label", historyCopy.streak),
-      createElement("span", "cliptoid-history__points", `${points} ${historyCopy.points}`)
+      pointsDisplay
     );
     historyFilters.replaceChildren();
     [1, 7, 30].forEach((days) => {

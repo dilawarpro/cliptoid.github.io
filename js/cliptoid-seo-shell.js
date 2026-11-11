@@ -39,7 +39,6 @@
     ["Slideshow images", "/download-tiktok-stories.html"],
     ["Help", "/troubleshooting/"],
     ["Compare tools", "/cliptoid-vs-snaptik.html"],
-    ["Updates", "/changelog.html"],
   ].forEach(([label, href]) => {
     const link = document.createElement("a");
     link.href = href;

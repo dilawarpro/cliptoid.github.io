@@ -8,6 +8,8 @@
   const adContainer = document.querySelector("#ad_main");
   let shareButton = document.querySelector("#cliptide-share");
   let shareRow = document.querySelector(".cliptide-share-row");
+  // Point this at your own cached proxy (see worker.js) for sub-second repeat lookups.
+  // It must accept ?url=...&hd=1 and return the same JSON shape as tikwm.
   const apiUrl = "https://www.tikwm.com/api/";
   const mediaHostPattern = /\.tiktokcdn(?:-[a-z]{2})?\.com$/i;
   const historyStorageKey = "cliptoid.downloadHistory.v1";
@@ -36,8 +38,48 @@
 };
   const historyLanguage = (document.documentElement.lang || "en").toLowerCase().split("-")[0];
   const historyCopy = historyTranslations[historyLanguage] || historyTranslations.en;
+
+  // ---------------------------------------------------------------------------
+  // Performance tuning constants
+  // ---------------------------------------------------------------------------
+  const MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024; // hard cap for any in-browser download
+  const PREFETCH_MAX_BYTES = 60 * 1024 * 1024; // only prefetch files up to this size
+  const DOWNLOAD_TIMEOUT_MS = 120000;
+  const API_HEDGE_MS = 2500; // start a parallel backup request if no answer by then
+  const API_DEADLINE_MS = 15000; // give up on the whole lookup after this
+  const INFO_STORAGE_KEY = "cliptoid.infoCache.v1";
+  const API_RATE_LIMIT_DELAY_MS = 1100; // tikwm free tier is rate limited
+  const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // CDN links expire, keep cache short
+  const INFO_CACHE_MAX = 50;
+  const infoCache = new Map(); // normalized post URL -> { data, time }
+
   let isLoading = false;
   let currentResult = { title: "", cover: "" };
+  let activeController = null; // AbortController for the in-flight API request
+  let activeUrl = ""; // URL being fetched right now
+  let lastRenderedUrl = ""; // URL whose result is currently on screen
+  let prefetchController = null; // aborts background media prefetch
+
+  const abortPrefetch = () => {
+    prefetchController?.abort();
+    prefetchController = null;
+  };
+
+  // Open the connection to the API early so the first request skips DNS + TLS setup.
+  const preconnectedOrigins = new Set();
+  const preconnect = (href) => {
+    try {
+      const origin = new URL(href).origin;
+      if (preconnectedOrigins.has(origin)) return;
+      preconnectedOrigins.add(origin);
+      const link = document.createElement("link");
+      link.rel = "preconnect";
+      link.href = origin;
+      link.crossOrigin = "";
+      document.head.append(link);
+    } catch {}
+  };
+  preconnect(apiUrl);
 
   const getLocalDay = (date = new Date()) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -811,7 +853,116 @@
     }
   };
 
-  const addDownloadLink = (parent, url, label, filename, variant = "") => {
+  const imageExtensions = ["jpg", "png", "webp", "avif"];
+  const mimeByExtension = {
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    jpg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    avif: "image/avif",
+  };
+
+  // Saves a Blob to disk through a temporary anchor element.
+  const saveBlob = (blob, filename) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const downloadLink = createElement("a");
+    downloadLink.href = blobUrl;
+    downloadLink.download = filename;
+    downloadLink.style.position = "fixed";
+    downloadLink.style.left = "-10000px";
+    document.body.append(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  };
+
+  // Streams a media file into memory with progress, size limits, timeout and cancellation.
+  // Used both for normal downloads and for background prefetching.
+  const downloadBlob = async (
+    url,
+    {
+      signal,
+      onProgress,
+      validateType,
+      fallbackType = "application/octet-stream",
+      maxBytes = MAX_DOWNLOAD_BYTES,
+      timeoutMs = DOWNLOAD_TIMEOUT_MS,
+    } = {}
+  ) => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    let timedOut = false;
+    if (signal) {
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
+    }
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Media server returned HTTP ${response.status}. Try again shortly.`);
+      }
+      if (!response.body) throw new Error("This browser cannot stream the media download.");
+      const type = response.headers.get("content-type")?.split(";")[0] || fallbackType;
+      validateType?.(type);
+
+      const declaredLength = Number(response.headers.get("content-length"));
+      if (declaredLength > maxBytes) {
+        throw new Error("This file is too large to download safely in your browser.");
+      }
+
+      const reader = response.body.getReader();
+      const chunks = [];
+      let receivedLength = 0;
+      let lastProgress = -1;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        receivedLength += value.byteLength;
+        if (receivedLength > maxBytes) {
+          await reader.cancel();
+          throw new Error("This file is too large to download safely in your browser.");
+        }
+        chunks.push(value);
+        if (declaredLength > 0 && onProgress) {
+          const progress = Math.min(99, Math.round((receivedLength / declaredLength) * 100));
+          if (progress !== lastProgress) {
+            lastProgress = progress;
+            onProgress(progress);
+          }
+        }
+      }
+      if (!receivedLength) throw new Error("The media server returned an empty file.");
+      return { blob: new Blob(chunks, { type }), type };
+    } catch (error) {
+      if (timedOut) throw new Error("The download timed out. Please try again.");
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    }
+  };
+
+  const canPrefetchMedia = () => {
+    const connection = navigator.connection;
+    if (!connection) return true;
+    if (connection.saveData) return false;
+    return !/(^|-)2g$/.test(connection.effectiveType || "");
+  };
+
+  const addDownloadLink = (parent, url, label, filename, variant = "", options = {}) => {
     const safeUrl = safeMediaUrl(url);
     if (!safeUrl) return false;
     const sourcePostUrl = input.value.trim();
@@ -824,26 +975,44 @@
     button.type = "button";
     const extension = filename.split(".").pop().toLowerCase();
     const isAudio = extension === "mp3";
-    const isImage = ["jpg", "png", "webp", "avif"].includes(extension);
+    const isImage = imageExtensions.includes(extension);
+    const mediaType = isAudio ? "audio" : isImage ? "image" : "video";
+    const fallbackType = mimeByExtension[extension] || "application/octet-stream";
     addButtonIcon(
       button,
       isAudio ? "audio" : isImage || variant === "hd" ? "download" : "video",
       isImage ? "" : isAudio ? "MP3" : variant === "hd" ? "HD" : "MP4"
     );
+
+    const validateType = (contentType) => {
+      if (mediaType === "video" && contentType.startsWith("audio/")) {
+        throw new Error("The media service returned audio instead of a video. No mislabeled file was saved.");
+      }
+      if (isAudio && /^(video|image)\//i.test(contentType)) {
+        throw new Error("The media service returned non-audio content instead of a sound file.");
+      }
+    };
+
+    // Background prefetch: start downloading the main video as soon as the result is
+    // shown, so the click only has to hand the finished file to the browser.
+    let progressListener = null;
+    let prefetched = null;
+    let finished = null;
+    if (options.prefetch && prefetchController && canPrefetchMedia()) {
+      prefetched = downloadBlob(safeUrl, {
+        signal: prefetchController.signal,
+        onProgress: (progress) => progressListener?.(progress),
+        validateType,
+        fallbackType,
+        maxBytes: PREFETCH_MAX_BYTES,
+      });
+      prefetched.then((result) => { finished = result; }, () => { prefetched = null; });
+    }
+
     button.addEventListener("click", async () => {
       if (button.disabled) return;
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
-      const mediaType = isAudio ? "audio" : ["jpg", "png", "webp", "avif"].includes(extension) ? "image" : "video";
-      const mimeByExtension = {
-        mp3: "audio/mpeg",
-        mp4: "video/mp4",
-        webm: "video/webm",
-        jpg: "image/jpeg",
-        png: "image/png",
-        webp: "image/webp",
-        avif: "image/avif",
-      };
       const status =
         parent.nextElementSibling?.classList.contains("cliptide-download-status")
           ? parent.nextElementSibling
@@ -853,67 +1022,32 @@
       status.textContent = `Starting ${mediaType} download…`;
       if (!status.isConnected) parent.after(status);
       setButtonLabel(button, `Starting ${mediaType}…`);
-      const downloadController = new AbortController();
-      const downloadTimeout = window.setTimeout(() => downloadController.abort(), 120000);
+
+      const showProgress = (progress) => {
+        status.textContent = `Downloading ${mediaType}… ${progress}%`;
+        setButtonLabel(button, `Downloading… ${progress}%`);
+      };
 
       try {
-        const response = await fetch(safeUrl, {
-          method: "GET",
-          mode: "cors",
-          credentials: "omit",
-          cache: "no-store",
-          signal: downloadController.signal,
-        });
-        if (!response.ok) {
-          throw new Error(`Media server returned HTTP ${response.status}. Try again shortly.`);
-        }
-        if (!response.body) throw new Error("This browser cannot stream the media download.");
-        const contentType = response.headers.get("content-type")?.split(";")[0] || mimeByExtension[extension] || "application/octet-stream";
-        if (mediaType === "video" && contentType.startsWith("audio/")) {
-          throw new Error("The media service returned audio instead of a video. No mislabeled file was saved.");
-        }
-        if (isAudio && /^(video|image)\//i.test(contentType)) {
-          throw new Error("The media service returned non-audio content instead of a sound file.");
-        }
-
-        const declaredLength = Number(response.headers.get("content-length"));
-        const maxDownloadBytes = 150 * 1024 * 1024;
-        if (declaredLength > maxDownloadBytes) {
-          throw new Error("This file is too large to download safely in your browser.");
-        }
-
-        const reader = response.body.getReader();
-        const chunks = [];
-        let receivedLength = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          receivedLength += value.byteLength;
-          if (receivedLength > maxDownloadBytes) {
-            await reader.cancel();
-            throw new Error("This file is too large to download safely in your browser.");
+        let result = finished;
+        if (!result && prefetched) {
+          progressListener = showProgress;
+          try {
+            result = await prefetched;
+          } catch {
+            result = null; // prefetch failed or was cancelled: fall back to a fresh download
           }
-          chunks.push(value);
-          if (declaredLength > 0) {
-            const progress = Math.min(99, Math.round((receivedLength / declaredLength) * 100));
-            status.textContent = `Downloading ${mediaType}… ${progress}%`;
-            setButtonLabel(button, `Downloading… ${progress}%`);
-          }
+          progressListener = null;
         }
-        if (!receivedLength) throw new Error("The media server returned an empty file.");
-        window.clearTimeout(downloadTimeout);
+        if (!result) {
+          result = await downloadBlob(safeUrl, {
+            onProgress: showProgress,
+            validateType,
+            fallbackType,
+          });
+        }
 
-        const blob = new Blob(chunks, { type: contentType });
-        const blobUrl = URL.createObjectURL(blob);
-        const downloadLink = createElement("a");
-        downloadLink.href = blobUrl;
-        downloadLink.download = filename;
-        downloadLink.style.position = "fixed";
-        downloadLink.style.left = "-10000px";
-        document.body.append(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
-        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        saveBlob(result.blob, filename);
         saveDownloadHistory(resultInfo, sourcePostUrl);
         status.textContent = "Your download has started.";
         setButtonLabel(button, "Download started");
@@ -924,7 +1058,7 @@
         }, 1800);
         return;
       } catch (error) {
-        window.clearTimeout(downloadTimeout);
+        progressListener = null;
         status.textContent =
           error.name === "AbortError"
             ? "Download cancelled."
@@ -980,40 +1114,57 @@
         canvas.height = 1280;
         const context = canvas.getContext("2d");
         stream = canvas.captureStream(24);
-        if (audioUrl && (window.AudioContext || window.webkitAudioContext)) {
+
+        // Audio and images are fetched in parallel instead of one after another.
+        const loadAudio = async () => {
+          if (!audioUrl || !(window.AudioContext || window.webkitAudioContext)) return;
           try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            await audioContext.resume();
+            const resumed = audioContext.resume(); // started inside the click gesture
             const audioResponse = await fetch(audioUrl, { mode: "cors", credentials: "omit" });
-            if (audioResponse.ok) {
-              const audioBuffer = await audioContext.decodeAudioData(await audioResponse.arrayBuffer());
-              audioDurationSeconds = audioBuffer.duration;
-              const audioDestination = audioContext.createMediaStreamDestination();
-              audioSource = audioContext.createBufferSource();
-              audioSource.buffer = audioBuffer;
-              audioSource.connect(audioDestination);
-              audioDestination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
-            }
+            if (!audioResponse.ok) return;
+            const audioBuffer = await audioContext.decodeAudioData(await audioResponse.arrayBuffer());
+            await resumed;
+            audioDurationSeconds = audioBuffer.duration;
+            const audioDestination = audioContext.createMediaStreamDestination();
+            audioSource = audioContext.createBufferSource();
+            audioSource.buffer = audioBuffer;
+            audioSource.connect(audioDestination);
+            audioDestination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
           } catch {
+            audioSource = null;
             if (audioContext) await audioContext.close().catch(() => {});
             audioContext = null;
           }
-        }
+        };
 
         let receivedImageBytes = 0;
-        const maxSlideshowBytes = 150 * 1024 * 1024;
-        for (let index = 0; index < imageUrls.length; index += 1) {
-          const response = await fetch(imageUrls[index], { mode: "cors", credentials: "omit" });
+        let loadedImages = 0;
+        const maxSlideshowBytes = MAX_DOWNLOAD_BYTES;
+        const loadSlide = async (imageUrl) => {
+          const response = await fetch(imageUrl, { mode: "cors", credentials: "omit" });
           if (!response.ok) throw new Error("A slideshow image could not be loaded.");
           const imageBlob = await response.blob();
           receivedImageBytes += imageBlob.size;
           if (receivedImageBytes > maxSlideshowBytes) {
             throw new Error("These slideshow images are too large to combine safely in your browser.");
           }
-          slideBitmaps.push(await createImageBitmap(imageBlob));
-          status.textContent = `Loading slideshow images… ${index + 1}/${imageUrls.length}`;
-          setButtonLabel(button, `Loading… ${index + 1}/${imageUrls.length}`);
-        }
+          const bitmap = await createImageBitmap(imageBlob);
+          loadedImages += 1;
+          status.textContent = `Loading slideshow images… ${loadedImages}/${imageUrls.length}`;
+          setButtonLabel(button, `Loading… ${loadedImages}/${imageUrls.length}`);
+          return bitmap;
+        };
+        const loadSlides = async () => {
+          const results = await Promise.allSettled(imageUrls.map(loadSlide));
+          results.forEach((result) => {
+            if (result.status === "fulfilled") slideBitmaps.push(result.value);
+          });
+          const failure = results.find((result) => result.status === "rejected");
+          if (failure) throw failure.reason;
+        };
+
+        await Promise.all([loadAudio(), loadSlides()]);
 
         const postDuration = Number(postDurationSeconds);
         const validPostDuration = Number.isFinite(postDuration) && postDuration > 0 && postDuration <= 600;
@@ -1054,16 +1205,7 @@
         recorder.stop();
         await recordingFinished;
         const blob = new Blob(chunks, { type: mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-        const downloadLink = createElement("a");
-        downloadLink.href = blobUrl;
-        downloadLink.download = filename;
-        downloadLink.style.position = "fixed";
-        downloadLink.style.left = "-10000px";
-        document.body.append(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
-        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        saveBlob(blob, filename);
         saveDownloadHistory({ ...currentResult, title }, input.value.trim());
         status.textContent = `Your slideshow video download has started.${extension === "webm" ? " This browser generated WebM instead of MP4." : ""}`;
         setButtonLabel(button, "Download started");
@@ -1191,7 +1333,137 @@
     return { caption, hashtags: hashtags.join(" ") };
   };
 
+  // ---------------------------------------------------------------------------
+  // API lookup: two-level cache (memory + localStorage), hedged parallel request,
+  // rate-limit aware retry
+  // ---------------------------------------------------------------------------
+  const isRateLimitError = (error) => error?.status === 429 || /limit/i.test(error?.message || "");
+
+  const readStoredInfo = (key) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(INFO_STORAGE_KEY) || "{}");
+      const entry = all[key];
+      return entry && Date.now() - entry.time < INFO_CACHE_TTL_MS ? entry : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeStoredInfo = (key, entry) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(INFO_STORAGE_KEY) || "{}");
+      all[key] = entry;
+      const fresh = Object.entries(all)
+        .filter(([, value]) => value && Date.now() - value.time < INFO_CACHE_TTL_MS)
+        .sort((a, b) => b[1].time - a[1].time)
+        .slice(0, 20);
+      localStorage.setItem(INFO_STORAGE_KEY, JSON.stringify(Object.fromEntries(fresh)));
+    } catch {}
+  };
+
+  const requestInfo = async (requestUrl, signal) => {
+    const response = await fetch(requestUrl, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal,
+      mode: "cors",
+      credentials: "omit",
+    });
+    if (!response.ok) {
+      const httpError = new Error(`The download service returned HTTP ${response.status}. Try again shortly.`);
+      httpError.status = response.status;
+      httpError.fatal = response.status >= 400 && response.status < 500 && response.status !== 429;
+      throw httpError;
+    }
+    const payload = await response.json();
+    if (Number(payload.code) !== 0 || !payload.data || typeof payload.data !== "object") {
+      const apiError = new Error(payload.msg || "The service could not process this TikTok link.");
+      apiError.fatal = !isRateLimitError(apiError);
+      throw apiError;
+    }
+    return payload.data;
+  };
+
+  const fetchInfo = (normalizedUrl, signal) => {
+    let cached = infoCache.get(normalizedUrl);
+    if (!cached || Date.now() - cached.time >= INFO_CACHE_TTL_MS) {
+      infoCache.delete(normalizedUrl);
+      cached = readStoredInfo(normalizedUrl);
+      if (cached) infoCache.set(normalizedUrl, cached);
+    }
+    if (cached) return Promise.resolve(cached.data);
+
+    const requestUrl = new URL(apiUrl);
+    requestUrl.searchParams.set("url", normalizedUrl);
+    requestUrl.searchParams.set("hd", "1");
+    const startedAt = performance.now();
+
+    return new Promise((resolve, reject) => {
+      const controllers = [];
+      let launched = 0;
+      let pending = 0;
+      let settled = false;
+      let lastError;
+      let hedgeTimer = 0;
+
+      const finish = (settle, value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(hedgeTimer);
+        window.clearTimeout(deadlineTimer);
+        controllers.forEach((controller) => controller.abort());
+        settle(value);
+      };
+      const deadlineTimer = window.setTimeout(
+        () => finish(reject, new DOMException("Timed out", "AbortError")),
+        API_DEADLINE_MS
+      );
+
+      const launch = () => {
+        if (settled || launched >= 2) return;
+        launched += 1;
+        pending += 1;
+        window.clearTimeout(hedgeTimer);
+        const controller = new AbortController();
+        controllers.push(controller);
+        const onAbort = () => controller.abort();
+        signal.addEventListener("abort", onAbort, { once: true });
+        requestInfo(requestUrl, controller.signal).then(
+          (data) => {
+            signal.removeEventListener("abort", onAbort);
+            console.debug(`[cliptoid] API lookup took ${Math.round(performance.now() - startedAt)} ms (request ${launched})`);
+            const entry = { data, time: Date.now() };
+            infoCache.set(normalizedUrl, entry);
+            if (infoCache.size > INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
+            writeStoredInfo(normalizedUrl, entry);
+            finish(resolve, data);
+          },
+          (error) => {
+            signal.removeEventListener("abort", onAbort);
+            pending -= 1;
+            lastError = error;
+            if (settled) return;
+            if (signal.aborted || error.fatal) return finish(reject, error);
+            if (launched < 2) {
+              // First request failed fast (network error or rate limit): try again.
+              window.setTimeout(launch, isRateLimitError(error) ? API_RATE_LIMIT_DELAY_MS : 0);
+              return;
+            }
+            if (pending === 0) finish(reject, lastError);
+          }
+        );
+        // Slow first request: start a backup in parallel; the first answer wins.
+        if (launched === 1) hedgeTimer = window.setTimeout(launch, API_HEDGE_MS);
+      };
+
+      if (signal.aborted) return finish(reject, new DOMException("Aborted", "AbortError"));
+      launch();
+    });
+  };
+
   const renderResult = (data) => {
+    abortPrefetch();
+    prefetchController = new AbortController();
     target.replaceChildren();
     const card = createElement("article", "cliptide-result");
     card.setAttribute("aria-label", "TikTok download results");
@@ -1207,6 +1479,7 @@
     const previewUrl = safeMediaUrl(data.cover || data.origin_cover || data.ai_dynamic_cover);
     currentResult = { title, cover: previewUrl || slideshowImages[0] || "" };
     const videoUrl = soundOnly ? null : safeMediaUrl(data.hdplay || data.play);
+    if (videoUrl) preconnect(videoUrl);
     const creatorName =
       typeof data.author?.nickname === "string"
         ? data.author.nickname
@@ -1224,12 +1497,14 @@
       details.append(createElement("p", "cliptide-result__creator", `@${creatorName.replace(/^@/, "")}`));
     }
 
+    // The main preview is above the fold, so it must not be lazy-loaded.
     if (slideshowImages.length) {
       const preview = createElement("figure", "cliptide-preview");
       const image = createElement("img");
       image.src = slideshowImages[0];
       image.alt = "Preview of the TikTok slideshow";
-      image.loading = "lazy";
+      image.decoding = "async";
+      image.setAttribute("fetchpriority", "high");
       preview.append(image);
       preview.append(createElement("figcaption", "", "Slideshow preview"));
       card.append(preview);
@@ -1238,7 +1513,8 @@
       const image = createElement("img");
       image.src = previewUrl;
       image.alt = soundOnly ? "TikTok sound cover" : videoUrl ? "TikTok video thumbnail" : "TikTok post preview";
-      image.loading = "lazy";
+      image.decoding = "async";
+      image.setAttribute("fetchpriority", "high");
       preview.append(image);
       card.append(preview);
     }
@@ -1263,12 +1539,14 @@
     } else {
       const regularVideoUrl = playUrl || hdVideoUrl;
       const hdOnly = !playUrl && Boolean(hdVideoUrl);
+      // Only the main video button is prefetched in the background.
       addDownloadLink(
         downloads,
         regularVideoUrl,
         "Download Video MP4 (No Watermark)",
         getDownloadFilename(title, "mp4"),
-        hdOnly ? "hd" : "primary"
+        hdOnly ? "hd" : "primary",
+        { prefetch: true }
       );
       if (playUrl && hdVideoUrl && hdVideoUrl !== playUrl) {
         addDownloadLink(
@@ -1295,6 +1573,8 @@
       anotherButton.type = "button";
       addButtonIcon(anotherButton, "repeat");
       anotherButton.addEventListener("click", () => {
+        abortPrefetch();
+        lastRenderedUrl = "";
         target.replaceChildren();
         input.value = "";
         input.focus();
@@ -1323,6 +1603,7 @@
         image.src = safeUrl;
         image.alt = `TikTok slideshow image ${index + 1}`;
         image.loading = "lazy";
+        image.decoding = "async";
         item.append(image);
         addDownloadLink(
           item,
@@ -1356,7 +1637,6 @@
     async (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (isLoading) return;
 
       const sourceUrl = input.value.trim();
       if (!isTikTokUrl(sourceUrl)) {
@@ -1368,34 +1648,29 @@
       const normalizedUrl = /^https:\/\//i.test(sourceUrl)
         ? sourceUrl
         : `https://${sourceUrl}`;
+      // Same link already being fetched: nothing to do.
+      if (isLoading && activeUrl === normalizedUrl) return;
+
       markActiveDay();
+      // A different link supersedes whatever was in flight (instead of being ignored).
+      abortPrefetch();
+      activeController?.abort();
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 25000);
+      activeController = controller;
+      activeUrl = normalizedUrl;
       isLoading = true;
       form.classList.add("htmx-request");
       submit.disabled = true;
       showLoadingSkeleton();
 
       try {
-        const requestUrl = new URL(apiUrl);
-        requestUrl.searchParams.set("url", normalizedUrl);
-        requestUrl.searchParams.set("hd", "1");
-        const response = await fetch(requestUrl, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          signal: controller.signal,
-          mode: "cors",
-          credentials: "omit",
-        });
-        if (!response.ok) {
-          throw new Error(`The download service returned HTTP ${response.status}. Try again shortly.`);
-        }
-        const payload = await response.json();
-        if (Number(payload.code) !== 0 || !payload.data || typeof payload.data !== "object") {
-          throw new Error(payload.msg || "The service could not process this TikTok link.");
-        }
-        renderResult(payload.data);
+        const data = await fetchInfo(normalizedUrl, controller.signal);
+        if (controller.signal.aborted) return;
+        renderResult(data);
+        lastRenderedUrl = normalizedUrl;
       } catch (error) {
+        if (controller.signal.aborted) return; // superseded by a newer request
+        lastRenderedUrl = "";
         const message =
           error.name === "AbortError"
             ? "The request timed out. Please try again."
@@ -1404,23 +1679,36 @@
               : error.message || "Something went wrong. Please try again.";
         showStatus(message, "error");
       } finally {
-        window.clearTimeout(timeout);
-        isLoading = false;
-        form.classList.remove("htmx-request");
-        submit.disabled = false;
+        if (controller === activeController) {
+          activeController = null;
+          activeUrl = "";
+          isLoading = false;
+          form.classList.remove("htmx-request");
+          submit.disabled = false;
+        }
       }
     },
     true
   );
 
+  // Auto-fetch: pasted links fire immediately, typed links wait briefly so a
+  // half-typed URL does not trigger a wasted request.
   let autoFetchTimer = 0;
-  input.addEventListener("input", () => {
+  input.addEventListener("input", (event) => {
     window.clearTimeout(autoFetchTimer);
-    if (!isTikTokUrl(input.value.trim())) return;
+    const value = input.value.trim();
+    if (!isTikTokUrl(value)) return;
 
+    const inputType = event.inputType || "";
+    const isTyping = inputType !== "" && !/paste|drop/i.test(inputType);
     autoFetchTimer = window.setTimeout(() => {
-      if (!isLoading && isTikTokUrl(input.value.trim())) form.requestSubmit();
-    }, 100);
+      const current = input.value.trim();
+      if (!isTikTokUrl(current)) return;
+      const normalized = /^https:\/\//i.test(current) ? current : `https://${current}`;
+      if (normalized === lastRenderedUrl) return;
+      if (isLoading && activeUrl === normalized) return;
+      form.requestSubmit();
+    }, isTyping ? 200 : 0);
   });
 
   if (sharedTikTokUrl) form.requestSubmit();

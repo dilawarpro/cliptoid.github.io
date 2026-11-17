@@ -45,8 +45,9 @@
   const MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024; // hard cap for any in-browser download
   const PREFETCH_MAX_BYTES = 60 * 1024 * 1024; // only prefetch files up to this size
   const DOWNLOAD_TIMEOUT_MS = 120000;
-  const API_FIRST_ATTEMPT_MS = 8000; // short first try, then retry once
-  const API_RETRY_ATTEMPT_MS = 15000;
+  const API_HEDGE_MS = 2500; // start a parallel backup request if no answer by then
+  const API_DEADLINE_MS = 15000; // give up on the whole lookup after this
+  const INFO_STORAGE_KEY = "cliptoid.infoCache.v1";
   const API_RATE_LIMIT_DELAY_MS = 1100; // tikwm free tier is rate limited
   const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // CDN links expire, keep cache short
   const INFO_CACHE_MAX = 50;
@@ -1333,68 +1334,131 @@
   };
 
   // ---------------------------------------------------------------------------
-  // API lookup: cached, short first attempt, one automatic retry, rate-limit aware
+  // API lookup: two-level cache (memory + localStorage), hedged parallel request,
+  // rate-limit aware retry
   // ---------------------------------------------------------------------------
   const isRateLimitError = (error) => error?.status === 429 || /limit/i.test(error?.message || "");
 
-  const fetchInfo = async (normalizedUrl, signal) => {
-    const cached = infoCache.get(normalizedUrl);
-    if (cached && Date.now() - cached.time < INFO_CACHE_TTL_MS) return cached.data;
-    infoCache.delete(normalizedUrl);
+  const readStoredInfo = (key) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(INFO_STORAGE_KEY) || "{}");
+      const entry = all[key];
+      return entry && Date.now() - entry.time < INFO_CACHE_TTL_MS ? entry : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeStoredInfo = (key, entry) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(INFO_STORAGE_KEY) || "{}");
+      all[key] = entry;
+      const fresh = Object.entries(all)
+        .filter(([, value]) => value && Date.now() - value.time < INFO_CACHE_TTL_MS)
+        .sort((a, b) => b[1].time - a[1].time)
+        .slice(0, 20);
+      localStorage.setItem(INFO_STORAGE_KEY, JSON.stringify(Object.fromEntries(fresh)));
+    } catch {}
+  };
+
+  const requestInfo = async (requestUrl, signal) => {
+    const response = await fetch(requestUrl, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal,
+      mode: "cors",
+      credentials: "omit",
+    });
+    if (!response.ok) {
+      const httpError = new Error(`The download service returned HTTP ${response.status}. Try again shortly.`);
+      httpError.status = response.status;
+      httpError.fatal = response.status >= 400 && response.status < 500 && response.status !== 429;
+      throw httpError;
+    }
+    const payload = await response.json();
+    if (Number(payload.code) !== 0 || !payload.data || typeof payload.data !== "object") {
+      const apiError = new Error(payload.msg || "The service could not process this TikTok link.");
+      apiError.fatal = !isRateLimitError(apiError);
+      throw apiError;
+    }
+    return payload.data;
+  };
+
+  const fetchInfo = (normalizedUrl, signal) => {
+    let cached = infoCache.get(normalizedUrl);
+    if (!cached || Date.now() - cached.time >= INFO_CACHE_TTL_MS) {
+      infoCache.delete(normalizedUrl);
+      cached = readStoredInfo(normalizedUrl);
+      if (cached) infoCache.set(normalizedUrl, cached);
+    }
+    if (cached) return Promise.resolve(cached.data);
 
     const requestUrl = new URL(apiUrl);
     requestUrl.searchParams.set("url", normalizedUrl);
     requestUrl.searchParams.set("hd", "1");
+    const startedAt = performance.now();
 
-    let lastError;
-    const lookupStartedAt = performance.now();
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const attemptController = new AbortController();
-      const onAbort = () => attemptController.abort();
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      signal.addEventListener("abort", onAbort, { once: true });
-      const timer = window.setTimeout(
-        () => attemptController.abort(),
-        attempt === 0 ? API_FIRST_ATTEMPT_MS : API_RETRY_ATTEMPT_MS
+    return new Promise((resolve, reject) => {
+      const controllers = [];
+      let launched = 0;
+      let pending = 0;
+      let settled = false;
+      let lastError;
+      let hedgeTimer = 0;
+
+      const finish = (settle, value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(hedgeTimer);
+        window.clearTimeout(deadlineTimer);
+        controllers.forEach((controller) => controller.abort());
+        settle(value);
+      };
+      const deadlineTimer = window.setTimeout(
+        () => finish(reject, new DOMException("Timed out", "AbortError")),
+        API_DEADLINE_MS
       );
-      try {
-        const response = await fetch(requestUrl, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          signal: attemptController.signal,
-          mode: "cors",
-          credentials: "omit",
-        });
-        if (!response.ok) {
-          const httpError = new Error(`The download service returned HTTP ${response.status}. Try again shortly.`);
-          httpError.status = response.status;
-          httpError.fatal = response.status >= 400 && response.status < 500 && response.status !== 429;
-          throw httpError;
-        }
-        const payload = await response.json();
-        if (Number(payload.code) !== 0 || !payload.data || typeof payload.data !== "object") {
-          const apiError = new Error(payload.msg || "The service could not process this TikTok link.");
-          apiError.fatal = !isRateLimitError(apiError);
-          throw apiError;
-        }
-        console.debug(`[cliptoid] API lookup took ${Math.round(performance.now() - lookupStartedAt)} ms (attempt ${attempt + 1})`);
-        infoCache.set(normalizedUrl, { data: payload.data, time: Date.now() });
-        if (infoCache.size > INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
-        return payload.data;
-      } catch (error) {
-        lastError = error;
-        if (signal.aborted || error.fatal) throw error;
-        if (attempt === 0) {
-          await new Promise((resolve) =>
-            window.setTimeout(resolve, isRateLimitError(error) ? API_RATE_LIMIT_DELAY_MS : 0)
-          );
-        }
-      } finally {
-        window.clearTimeout(timer);
-        signal.removeEventListener("abort", onAbort);
-      }
-    }
-    throw lastError;
+
+      const launch = () => {
+        if (settled || launched >= 2) return;
+        launched += 1;
+        pending += 1;
+        window.clearTimeout(hedgeTimer);
+        const controller = new AbortController();
+        controllers.push(controller);
+        const onAbort = () => controller.abort();
+        signal.addEventListener("abort", onAbort, { once: true });
+        requestInfo(requestUrl, controller.signal).then(
+          (data) => {
+            signal.removeEventListener("abort", onAbort);
+            console.debug(`[cliptoid] API lookup took ${Math.round(performance.now() - startedAt)} ms (request ${launched})`);
+            const entry = { data, time: Date.now() };
+            infoCache.set(normalizedUrl, entry);
+            if (infoCache.size > INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
+            writeStoredInfo(normalizedUrl, entry);
+            finish(resolve, data);
+          },
+          (error) => {
+            signal.removeEventListener("abort", onAbort);
+            pending -= 1;
+            lastError = error;
+            if (settled) return;
+            if (signal.aborted || error.fatal) return finish(reject, error);
+            if (launched < 2) {
+              // First request failed fast (network error or rate limit): try again.
+              window.setTimeout(launch, isRateLimitError(error) ? API_RATE_LIMIT_DELAY_MS : 0);
+              return;
+            }
+            if (pending === 0) finish(reject, lastError);
+          }
+        );
+        // Slow first request: start a backup in parallel; the first answer wins.
+        if (launched === 1) hedgeTimer = window.setTimeout(launch, API_HEDGE_MS);
+      };
+
+      if (signal.aborted) return finish(reject, new DOMException("Aborted", "AbortError"));
+      launch();
+    });
   };
 
   const renderResult = (data) => {
@@ -1674,4 +1738,4 @@
     });
   }
 
-})(); 
+})();

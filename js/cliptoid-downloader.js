@@ -8,6 +8,8 @@
   const adContainer = document.querySelector("#ad_main");
   let shareButton = document.querySelector("#cliptide-share");
   let shareRow = document.querySelector(".cliptide-share-row");
+  // Point this at your own cached proxy (see worker.js) for sub-second repeat lookups.
+  // It must accept ?url=...&hd=1 and return the same JSON shape as tikwm.
   const apiUrl = "https://www.tikwm.com/api/";
   const mediaHostPattern = /\.tiktokcdn(?:-[a-z]{2})?\.com$/i;
   const historyStorageKey = "cliptoid.downloadHistory.v1";
@@ -1345,6 +1347,7 @@
     requestUrl.searchParams.set("hd", "1");
 
     let lastError;
+    const lookupStartedAt = performance.now();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const attemptController = new AbortController();
       const onAbort = () => attemptController.abort();
@@ -1374,6 +1377,7 @@
           apiError.fatal = !isRateLimitError(apiError);
           throw apiError;
         }
+        console.debug(`[cliptoid] API lookup took ${Math.round(performance.now() - lookupStartedAt)} ms (attempt ${attempt + 1})`);
         infoCache.set(normalizedUrl, { data: payload.data, time: Date.now() });
         if (infoCache.size > INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
         return payload.data;

@@ -1,281 +1,328 @@
-"use strict";
+(() => {
+  "use strict";
 
-// Change this on every deployment that should trigger an app update.
-// Ideally inject a build ID automatically.
-const BUILD = "2026-07-19-1";
+  /* ───────────── Config ───────────── */
+  const CFG = {
+    swUrl: "/service-worker.js",
+    updateCheckMs: 15 * 60 * 1000,
+    minUpdateGapMs: 60 * 1000,
+    errorEndpoint: null,          // e.g. "/api/client-errors" (sendBeacon)
+    maxErrorReports: 5,
+    installSelector: "#dwapp_image, #cliptoid-install-result",
+    inputSelector: "#main_page_text",
+    pendingKey: "cliptoid.pendingUpdateInput",
+  };
 
-const CACHE_PREFIX = "cliptoid-assets-";
-const IMMUTABLE_CACHE = `${CACHE_PREFIX}immutable-${BUILD}`;
-const RUNTIME_CACHE = `${CACHE_PREFIX}runtime-${BUILD}`;
+  const onReady = (fn) =>
+    document.readyState === "loading"
+      ? document.addEventListener("DOMContentLoaded", fn, { once: true })
+      : fn();
 
-const ACTIVE_CACHES = new Set([IMMUTABLE_CACHE, RUNTIME_CACHE]);
+  const idle = (fn) =>
+    "requestIdleCallback" in window
+      ? requestIdleCallback(fn, { timeout: 3000 })
+      : setTimeout(fn, 1);
 
-const MAX_IMMUTABLE_ENTRIES = 80;
-const MAX_RUNTIME_ENTRIES = 40;
+  const isStandalone = () =>
+    matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
-/*
- * Only PUBLIC, non-personalized static files belong here.
- *
- * Unversioned files use stale-while-revalidate:
- * cached response immediately, background refresh for the next request.
- *
- * Replace these examples with your actual paths.
- */
-const PUBLIC_ASSETS = new Set([
-  // "/css/site.css",
-  // "/js/site.js",
-  // "/images/logo.webp",
-]);
-
-/*
- * Recognizes fingerprinted assets in public /assets/ and /static/ folders:
- * /assets/app.a13f29cd.js
- * /static/styles-91ab32ef.css
- *
- * Adjust this to your build system. Never reuse a fingerprinted URL for
- * different content, and never put private/user-specific files here.
- */
-const FINGERPRINTED_ASSET =
-  /^\/(?:assets|static)\/.+[.-][a-f0-9]{8,}\.(?:js|mjs|css|png|jpe?g|webp|avif|gif|svg|ico|woff2?|ttf)$/i;
-
-const STATIC_DESTINATIONS = new Set([
-  "script",
-  "style",
-  "image",
-  "font",
-]);
-
-const OFFLINE_HTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cliptoid — Offline</title>
-</head>
-<body>
-  <main>
-    <h1>You’re offline</h1>
-    <p>Reconnect to load this page. Previously cached app assets remain available.</p>
-    <p><a href="">Try again</a></p>
-  </main>
-</body>
-</html>`;
-
-// Serialize writes so trimming does not race with other writes.
-let writeQueue = Promise.resolve();
-
-function mayCache(response) {
-  if (
-    !response ||
-    response.status !== 200 ||
-    response.type !== "basic" ||
-    response.redirected
-  ) {
-    return false;
-  }
-
-  const cacheControl = response.headers.get("Cache-Control") || "";
-  const vary = response.headers.get("Vary") || "";
-
-  // Cache Storage does not enforce these headers automatically.
-  if (/\b(?:private|no-store|no-cache)\b/i.test(cacheControl)) return false;
-  if (/(?:^|,)\s*(?:\*|cookie|authorization)\s*(?:,|$)/i.test(vary)) {
-    return false;
-  }
-
-  return true;
-}
-
-function writeCache(cacheName, request, response, maximumEntries) {
-  if (!mayCache(response)) return Promise.resolve();
-
-  const copy = response.clone();
-
-  const operation = writeQueue.then(async () => {
-    const cache = await caches.open(cacheName);
-    await cache.put(request, copy);
-
-    // Bounded insertion-order eviction, not a full LRU implementation.
-    const keys = await cache.keys();
-    const excess = keys.length - maximumEntries;
-
-    if (excess > 0) {
-      await Promise.all(
-        keys.slice(0, excess).map((key) => cache.delete(key))
+  /* ───────────── Error reporting (deduped, capped) ───────────── */
+  const seenErrors = new Set();
+  const report = (context, err) => {
+    const message = String(err?.message || err);
+    const key = `${context}:${message}`;
+    if (seenErrors.has(key) || seenErrors.size >= CFG.maxErrorReports) return;
+    seenErrors.add(key);
+    console.error(`[Cliptoid] ${context}:`, err);
+    if (CFG.errorEndpoint && navigator.sendBeacon) {
+      navigator.sendBeacon(
+        CFG.errorEndpoint,
+        JSON.stringify({ context, message, url: location.href })
       );
     }
-  });
+  };
+  addEventListener("error", (e) => report("window.error", e.error || e.message));
+  addEventListener("unhandledrejection", (e) => report("unhandledrejection", e.reason));
 
-  // Storage failures must not break successful network responses.
-  writeQueue = operation.catch(() => {});
-  return writeQueue;
-}
-
-async function readCache(cacheName, request) {
-  try {
-    const cache = await caches.open(cacheName);
-    return await cache.match(request);
-  } catch {
-    return undefined;
-  }
-}
-
-async function fetchAndStore(cacheName, request, maximumEntries) {
-  const response = await fetch(request);
-
-  // Return the network response without waiting for the disk write.
-  const stored = writeCache(
-    cacheName,
-    request,
-    response,
-    maximumEntries
-  );
-
-  return { response, stored };
-}
-
-function cacheFirst(event) {
-  const result = (async () => {
-    const cached = await readCache(IMMUTABLE_CACHE, event.request);
-
-    if (cached) {
-      return { response: cached, stored: Promise.resolve() };
+  /* ───────────── Toast helper (accessible, one at a time) ───────────── */
+  let toast, toastTimer;
+  const notify = (message, { actionLabel, onAction, timeout = 4000 } = {}) => {
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.setAttribute("role", "status");
+      toast.setAttribute("aria-live", "polite");
+      toast.style.cssText =
+        "position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);z-index:9999;" +
+        "max-width:90vw;padding:.75rem 1rem;border-radius:.5rem;background:#222;color:#fff;" +
+        "font:14px/1.4 system-ui,sans-serif;align-items:center;gap:.75rem;" +
+        "box-shadow:0 4px 16px rgba(0,0,0,.3);display:none";
+      document.body.append(toast);
     }
+    clearTimeout(toastTimer);
+    toast.replaceChildren(document.createTextNode(message));
+    if (actionLabel && onAction) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = actionLabel;
+      btn.style.cssText = "cursor:pointer;border:0;border-radius:.25rem;padding:.35rem .7rem;font:inherit;font-weight:600";
+      btn.addEventListener("click", () => { toast.style.display = "none"; onAction(); }, { once: true });
+      toast.append(btn);
+    }
+    toast.style.display = "flex";
+    if (timeout) toastTimer = setTimeout(() => { toast.style.display = "none"; }, timeout);
+  };
 
-    return fetchAndStore(
-      IMMUTABLE_CACHE,
-      event.request,
-      MAX_IMMUTABLE_ENTRIES
-    );
-  })();
+  /* ───────────── smartFetch: TTL cache + stale-while-revalidate + dedupe + retry + timeout ───────────── */
+  const memCache = new Map();
+  const inflight = new Map();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  event.respondWith(result.then(({ response }) => response));
-
-  // Register lifetime extension synchronously during the fetch event.
-  event.waitUntil(
-    result.then(({ stored }) => stored).catch(() => {})
-  );
-}
-
-function staleWhileRevalidate(event) {
-  const cached = readCache(RUNTIME_CACHE, event.request);
-
-  // Only one network request is started for this fetch event.
-  const network = fetchAndStore(
-    RUNTIME_CACHE,
-    event.request,
-    MAX_RUNTIME_ENTRIES
-  );
-
-  event.respondWith(
-    cached.then(async (response) => {
-      if (response) return response;
-      return (await network).response;
-    })
-  );
-
-  event.waitUntil(
-    network.then(({ stored }) => stored).catch(() => {})
-  );
-}
-
-function offlineResponse() {
-  return new Response(OFFLINE_HTML, {
-    status: 503,
-    statusText: "Service Unavailable",
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-      "Content-Security-Policy":
-        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-    },
-  });
-}
-
-async function navigationResponse(event) {
-  try {
-    // Navigation preload starts the request while the worker boots.
-    const preloaded = await event.preloadResponse;
-    if (preloaded) return preloaded;
-
-    return await fetch(event.request);
-  } catch {
-    return offlineResponse();
-  }
-}
-
-self.addEventListener("install", () => {
-  // Intentionally no automatic skipWaiting().
-  // New versions wait for explicit user approval or all old tabs to close.
-  //
-  // Assets are cached on demand, avoiding a large install-time download.
-});
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    (async () => {
-      const names = await caches.keys();
-
-      await Promise.all(
-        names
-          .filter(
-            (name) =>
-              name.startsWith(CACHE_PREFIX) &&
-              !ACTIVE_CACHES.has(name)
-          )
-          .map((name) => caches.delete(name))
-      );
-
-      if (self.registration.navigationPreload) {
-        await self.registration.navigationPreload.enable().catch(() => {});
+  async function fetchWithRetry(url, { retries, timeout, parse, init }) {
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeout);
+      try {
+        const res = await fetch(url, { ...init, signal: ctrl.signal });
+        if (res.ok) return await res[parse]();
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        // Only retry transient failures
+        if (res.status < 500 && res.status !== 429) throw Object.assign(err, { fatal: true });
+        lastErr = err;
+      } catch (e) {
+        if (e.fatal) throw e;
+        lastErr = e;
+      } finally {
+        clearTimeout(timer);
       }
-
-      await self.clients.claim();
-    })()
-  );
-});
-
-self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") {
-    event.waitUntil(self.skipWaiting());
-  }
-});
-
-self.addEventListener("fetch", (event) => {
-  const request = event.request;
-
-  // Never cache mutations or requests with explicit authorization.
-  if (request.method !== "GET") return;
-  if (request.headers.has("Authorization")) return;
-  if (request.headers.has("Range")) return;
-
-  // HTMX responses may be fragments rather than complete documents.
-  if (request.headers.has("HX-Request")) return;
-
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-
-  // HTML is not persisted, avoiding stale/private page-cache problems.
-  if (request.mode === "navigate") {
-    event.respondWith(navigationResponse(event));
-    return;
+      if (attempt < retries) await sleep(2 ** attempt * 400 + Math.random() * 250); // backoff + jitter
+    }
+    throw lastErr;
   }
 
-  // Respect explicit reload, revalidation, and no-store request modes.
-  if (request.cache !== "default") return;
+  const smartFetch = async (url, opts = {}) => {
+    const {
+      ttl = 60_000,          // fresh window
+      staleTtl = 600_000,    // serve stale + revalidate within this window
+      retries = 2,
+      timeout = 8000,
+      parse = "json",
+      init = {},
+      force = false,
+    } = opts;
+    const key = `${init.method || "GET"}:${url}`;
+    const hit = memCache.get(key);
+    const age = hit ? Date.now() - hit.time : Infinity;
 
-  // A fetch() API request should not accidentally become a static asset.
-  if (!STATIC_DESTINATIONS.has(request.destination)) return;
+    const refresh = () => {
+      if (inflight.has(key)) return inflight.get(key);   // dedupe concurrent calls
+      const p = fetchWithRetry(url, { retries, timeout, parse, init })
+        .then((data) => { memCache.set(key, { data, time: Date.now() }); return data; })
+        .finally(() => inflight.delete(key));
+      inflight.set(key, p);
+      return p;
+    };
 
-  if (FINGERPRINTED_ASSET.test(url.pathname) && !url.search) {
-    cacheFirst(event);
-    return;
+    if (!force && hit && age < ttl) return hit.data;
+    if (!force && hit && age < staleTtl) { refresh().catch(() => {}); return hit.data; }
+    try {
+      return await refresh();
+    } catch (err) {
+      if (hit) return hit.data;                          // graceful degradation: any stale data beats an error
+      throw err;
+    }
+  };
+
+  /* ───────────── Navigation menu ───────────── */
+  onReady(() => {
+    const toggle = document.querySelector("#menu_toggler");
+    const wrapper = toggle?.closest(".menu-wrapper");
+    const nav = document.querySelector(".cliptoid-primary-nav");
+    if (!toggle || !wrapper || !nav) return;
+
+    toggle.setAttribute("aria-label", "Toggle main navigation");
+    if (nav.id) toggle.setAttribute("aria-controls", nav.id);
+    toggle.setAttribute("aria-expanded", "false");
+
+    const setOpen = (open) => {
+      toggle.checked = open;
+      toggle.setAttribute("aria-expanded", String(open));
+      wrapper.classList.toggle("cliptoid-nav-open", open);
+    };
+    toggle.addEventListener("change", () => setOpen(toggle.checked));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && toggle.checked) { setOpen(false); toggle.focus(); }
+    });
+    document.addEventListener("click", (e) => {
+      if (!toggle.checked || !(e.target instanceof Element)) return;
+      if (e.target.closest("a") && nav.contains(e.target)) setOpen(false);
+      else if (!wrapper.contains(e.target)) setOpen(false);
+    });
+  });
+
+  /* ───────────── PWA install ───────────── */
+  let installPrompt = null;
+  const installButtons = () => [...document.querySelectorAll(CFG.installSelector)];
+  const hideInstallButtons = () => installButtons().forEach((b) => { b.hidden = true; });
+
+  onReady(() => { if (isStandalone()) hideInstallButtons(); });
+
+  addEventListener("beforeinstallprompt", (e) => {
+    if (!installButtons().length) return;
+    e.preventDefault();
+    installPrompt = e;
+  });
+  addEventListener("appinstalled", () => { installPrompt = null; hideInstallButtons(); });
+
+  document.addEventListener("click", async (e) => {
+    if (!(e.target instanceof Element) || !e.target.closest(CFG.installSelector)) return;
+    e.preventDefault();
+
+    if (installPrompt) {
+      const promptEvent = installPrompt;
+      installPrompt = null;                       // prompt() is single-use
+      try {
+        await promptEvent.prompt();
+        const { outcome } = await promptEvent.userChoice;
+        if (outcome === "accepted") hideInstallButtons();
+      } catch (err) {
+        report("install", err);
+        notify("Couldn't start installation. Try your browser menu instead.");
+      }
+      return;
+    }
+    if (isStandalone()) return notify("Cliptoid is already installed on this device.");
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent))
+      return notify("Tap Share, then “Add to Home Screen”.", { timeout: 6000 });
+    notify("Use your browser menu → “Install app” or “Add to Home Screen”.", { timeout: 6000 });
+  });
+
+  /* ───────────── Link prefetch on intent (faster navigations, no markup changes) ───────────── */
+  const conn = navigator.connection;
+  const canPrefetch = !(conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType || ""));
+  if (canPrefetch) {
+    const done = new Set();
+    let hoverTimer;
+    const prefetch = (a) => {
+      if (!a || a.target === "_blank" || a.hasAttribute("download") || "noPrefetch" in a.dataset) return;
+      const url = new URL(a.href, location.href);
+      if (url.origin !== location.origin || url.hash && url.pathname === location.pathname) return;
+      if (url.href === location.href || done.has(url.href)) return;
+      done.add(url.href);
+      const link = document.createElement("link");
+      link.rel = "prefetch";
+      link.as = "document";
+      link.href = url.href;
+      document.head.append(link);
+    };
+    const linkFrom = (e) => (e.target instanceof Element ? e.target.closest("a[href]") : null);
+    document.addEventListener("pointerover", (e) => {
+      if (e.pointerType === "touch") return;
+      const a = linkFrom(e);
+      if (a) hoverTimer = setTimeout(() => prefetch(a), 80);
+    }, { passive: true });
+    document.addEventListener("pointerout", () => clearTimeout(hoverTimer), { passive: true });
+    document.addEventListener("touchstart", (e) => prefetch(linkFrom(e)), { passive: true });
   }
 
-  // Query strings are significant. Do not ignore them when matching.
-  if (PUBLIC_ASSETS.has(url.pathname + url.search)) {
-    staleWhileRevalidate(event);
+  /* ───────────── htmx friendly errors ───────────── */
+  document.addEventListener("htmx:sendError", () =>
+    notify(navigator.onLine ? "Couldn't reach the server. Please try again." : "You're offline. Reconnect and try again."));
+  document.addEventListener("htmx:timeout", () => notify("The request timed out. Please try again."));
+  document.addEventListener("htmx:responseError", (e) => {
+    const s = e.detail?.xhr?.status;
+    notify(s === 429 ? "Too many requests. Please wait a moment." :
+           s >= 500 ? "Server hiccup. Please try again shortly." :
+           "Something went wrong with that request.");
+  });
+
+  /* ───────────── Preserve input across updates ───────────── */
+  const saveInput = () => {
+    const input = document.querySelector(CFG.inputSelector);
+    if (input?.value) try { sessionStorage.setItem(CFG.pendingKey, input.value); } catch {}
+  };
+  onReady(() => {
+    try {
+      const saved = sessionStorage.getItem(CFG.pendingKey);
+      if (!saved) return;
+      sessionStorage.removeItem(CFG.pendingKey);
+      const input = document.querySelector(CFG.inputSelector);
+      if (input && !input.value) {
+        input.value = saved;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } catch {}
+  });
+
+  let reloading = false, reloadQueued = false;
+  const reloadWhenIdle = () => {
+    if (reloading) return;
+    if (document.querySelector('[aria-busy="true"], form.htmx-request')) {
+      if (!reloadQueued) {
+        reloadQueued = true;
+        setTimeout(() => { reloadQueued = false; reloadWhenIdle(); }, 1000);
+      }
+      return;
+    }
+    saveInput();
+    reloading = true;
+    location.reload();
+  };
+
+  /* ───────────── Service worker ───────────── */
+  const swOk = "serviceWorker" in navigator && isSecureContext;
+  if (swOk) {
+    const hadController = Boolean(navigator.serviceWorker.controller);
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController) reloadWhenIdle();       // only after user accepted the update
+    });
+
+    let contentNotified = false;
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data?.type !== "CONTENT_UPDATED" || contentNotified) return;
+      contentNotified = true;
+      notify("Fresh content is available.", { actionLabel: "Refresh", onAction: reloadWhenIdle, timeout: 0 });
+    });
+
+    const start = async () => {
+      try {
+        const reg = await navigator.serviceWorker.register(CFG.swUrl, { updateViaCache: "none" });
+
+        const promptUpdate = (worker) =>
+          notify("A new version is ready.", {
+            actionLabel: "Update",
+            onAction: () => worker.postMessage({ type: "SKIP_WAITING" }),
+            timeout: 0,
+          });
+
+        if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
+        reg.addEventListener("updatefound", () => {
+          const w = reg.installing;
+          w?.addEventListener("statechange", () => {
+            if (w.state === "installed" && navigator.serviceWorker.controller) promptUpdate(w);
+          });
+        });
+
+        let last = 0;
+        const check = () => {
+          if (!navigator.onLine || Date.now() - last < CFG.minUpdateGapMs) return;
+          last = Date.now();
+          reg.update().catch(() => {});
+        };
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+        addEventListener("online", check);
+        setInterval(() => { if (!document.hidden) check(); }, CFG.updateCheckMs);
+      } catch (err) {
+        report("service-worker", err);
+      }
+    };
+
+    // Don't compete with LCP: register after load, when idle
+    if (document.readyState === "complete") idle(start);
+    else addEventListener("load", () => idle(start), { once: true });
   }
 
-  // Everything else uses the browser's normal network/HTTP-cache behavior.
-});
+  window.Cliptoid = Object.freeze({ smartFetch, notify });
+})();

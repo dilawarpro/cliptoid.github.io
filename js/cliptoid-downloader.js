@@ -8,10 +8,10 @@
   const adContainer = document.querySelector("#ad_main");
   let shareButton = document.querySelector("#cliptide-share");
   let shareRow = document.querySelector(".cliptide-share-row");
-  // Point this at your own cached proxy (see worker.js) for sub-second repeat lookups.
-  // It must accept ?url=...&hd=1 and return the same JSON shape as tikwm.
-  const apiUrl = "https://www.tikwm.com/api/";
-  const mediaHostPattern = /\.tiktokcdn(?:-[a-z]{2})?\.com$/i;
+  // Your own Cloudflare Worker API (TikWM-compatible endpoint, no third-party dependency).
+  const apiUrl = "https://tiktok-dl-api.dilawargithub.workers.dev/api/compat";
+  // Media (video, audio, images) is served through the same Worker, so only allow its host.
+  const mediaHostPattern = /^tiktok-dl-api\.dilawargithub\.workers\.dev$/i;
   const historyStorageKey = "cliptoid.downloadHistory.v1";
   const activityStorageKey = "cliptoid.activityStreak.v1";
   const downloadCountStorageKey = "cliptoid.downloadCount.v1";
@@ -48,7 +48,7 @@
   const API_HEDGE_MS = 2500; // start a parallel backup request if no answer by then
   const API_DEADLINE_MS = 15000; // give up on the whole lookup after this
   const INFO_STORAGE_KEY = "cliptoid.infoCache.v1";
-  const API_RATE_LIMIT_DELAY_MS = 1100; // tikwm free tier is rate limited
+  const API_RATE_LIMIT_DELAY_MS = 1100; // retry delay if the API reports a rate limit
   const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // CDN links expire, keep cache short
   const INFO_CACHE_MAX = 50;
   const infoCache = new Map(); // normalized post URL -> { data, time }

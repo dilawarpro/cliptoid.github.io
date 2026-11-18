@@ -1,3 +1,44 @@
+const API_BASE = "https://tiktok-dl-api.dilawargithub.workers.dev";
+document.getElementById("base").textContent = API_BASE;
+
+const $ = (id) => document.getElementById(id);
+
+function dl(url, type, title) {
+  const name = (title || "tiktok-video").slice(0, 80) + " downloaded by tiktokvideodownload.app";
+  return `${API_BASE}/api/download?url=${encodeURIComponent(url)}&type=${type}&filename=${encodeURIComponent(name)}`;
+}
+
+$("go").addEventListener("click", async () => {
+  const link = $("url").value.trim();
+  const out = $("out");
+  if (!link) { out.innerHTML = '<p class="err">Please paste a TikTok link first.</p>'; return; }
+  out.textContent = "Loading...";
+  try {
+    const r = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(link)}`);
+    const j = await r.json();
+    if (!j.ok) {
+      out.innerHTML = '<p class="err"></p>';
+      out.firstChild.textContent = j.error + (j.detail ? " — " + JSON.stringify(j.detail) : "");
+      return;
+    }
+    const d = j.data;
+    out.innerHTML = "";
+    if (d.cover) { const im = document.createElement("img"); im.src = d.cover; out.appendChild(im); }
+    const t = document.createElement("p");
+    t.textContent = d.title + (d.author?.username ? " — @" + d.author.username : "");
+    out.appendChild(t);
+    [["video", "Download video"], ["hd", "Download HD"], ["music", "Download MP3"]].forEach(([type, label]) => {
+      if (!d[type]) return;
+      const a = document.createElement("a");
+      a.className = "btn"; a.textContent = label; a.href = dl(link, type, d.title);
+      out.appendChild(a);
+    });
+  } catch (e) {
+    out.innerHTML = '<p class="err"></p>';
+    out.firstChild.textContent = "Request failed: " + e.message;
+  }
+});
+
 (() => {
   "use strict";
 

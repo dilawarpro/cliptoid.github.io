@@ -10,7 +10,7 @@
   let shareRow = document.querySelector(".cliptide-share-row");
   // Point this at your own cached proxy (see worker.js) for sub-second repeat lookups.
   // It must accept ?url=...&hd=1 and return the same JSON shape as tikwm.
-  const apiUrl = "https://tiktok-dl-api.dilawargithub.workers.dev";
+  const apiUrl = "https://www.tikwm.com/api/";
   const mediaHostPattern = /\.tiktokcdn(?:-[a-z]{2})?\.com$/i;
   const historyStorageKey = "cliptoid.downloadHistory.v1";
   const activityStorageKey = "cliptoid.activityStreak.v1";

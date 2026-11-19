@@ -18,6 +18,9 @@
     maxPrefetch: 8,               // max pages prefetched per visit
     maxMemCache: 100,             // max entries kept by smartFetch
     maxReloadWaits: 15,           // update reload waits at most ~15 s for a busy request
+    healKey: "cliptoid.lastHeal",
+    healWindowMs: 30 * 60 * 1000, // self-heal at most once per 30 min, so it can never loop
+    storageWarnRatio: 0.8,        // ask the worker to trim caches above 80% of the storage quota
   };
 
   const onReady = (fn) =>
@@ -32,6 +35,16 @@
 
   const isStandalone = () =>
     matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+  // Low-memory / low-core phones: smaller in-memory cache and no speculative prefetching.
+  const lowEnd =
+    (navigator.deviceMemory > 0 && navigator.deviceMemory <= 2) ||
+    (navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 2);
+  if (lowEnd) CFG.maxMemCache = 30;
+
+  // localStorage can throw (private mode, blocked, full): never let that break anything.
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
   /* ───────────── Error reporting (deduped, capped) ───────────── */
   const seenErrors = new Set();
@@ -52,8 +65,10 @@
   addEventListener("unhandledrejection", (e) => report("unhandledrejection", e.reason));
 
   /* ───────────── Toast helper (accessible, one at a time) ───────────── */
-  let toast, toastTimer;
-  const notify = (message, { actionLabel, onAction, timeout = 4000 } = {}) => {
+  let toast, toastTimer, sticky = null;   // sticky = last toast that needs a tap (update / reload)
+  const notify = (message, opts = {}) => {
+    const { actionLabel, onAction, timeout = 4000 } = opts;
+    if (!timeout && actionLabel && onAction) sticky = { message, opts };
     if (!toast) {
       toast = document.createElement("div");
       toast.setAttribute("role", "status");
@@ -72,11 +87,21 @@
       btn.type = "button";
       btn.textContent = actionLabel;
       btn.style.cssText = "cursor:pointer;border:0;border-radius:.25rem;padding:.35rem .7rem;font:inherit;font-weight:600";
-      btn.addEventListener("click", () => { toast.style.display = "none"; onAction(); }, { once: true });
+      btn.addEventListener("click", () => {
+        if (sticky && sticky.message === message) sticky = null;
+        toast.style.display = "none";
+        onAction();
+      }, { once: true });
       toast.append(btn);
     }
     toast.style.display = "flex";
-    if (timeout) toastTimer = setTimeout(() => { toast.style.display = "none"; }, timeout);
+    if (timeout) {
+      toastTimer = setTimeout(() => {
+        toast.style.display = "none";
+        // A short message must never permanently hide "A new version is ready" etc.
+        if (sticky && sticky.message !== message) notify(sticky.message, sticky.opts);
+      }, timeout);
+    }
   };
 
   /* ───────────── smartFetch: TTL cache + stale-while-revalidate + dedupe + retry + timeout ───────────── */
@@ -90,11 +115,22 @@
     if (memCache.size > CFG.maxMemCache) memCache.delete(memCache.keys().next().value); // drop oldest
   };
 
-  async function fetchWithRetry(url, { retries, timeout, parse, init }) {
+  // Every error carries .kind: "offline" | "timeout" | "network" | "http" | "parse" | "aborted"
+  // (plus .status for "http"), so the UI can show the right message instead of a generic one.
+  const tag = (e, kind, extra) => Object.assign(e instanceof Error || e instanceof DOMException ? e : new Error(String(e)), { kind }, extra);
+
+  async function fetchWithRetry(url, { retries, timeout, parse, init, signal }) {
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
+      if (signal?.aborted) throw tag(new DOMException("Aborted", "AbortError"), "aborted", { fatal: true });
+      if (navigator.onLine === false) throw tag(new Error("You're offline"), "offline", { fatal: true });  // fail instantly, don't wait 2 x timeout
+
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), timeout);
+      const onAbort = () => ctrl.abort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeout);
+      let wait = 2 ** attempt * 300 + Math.random() * 200;               // backoff + jitter
       try {
         const res = await fetch(url, { ...init, signal: ctrl.signal });
         if (res.ok) {
@@ -102,21 +138,25 @@
             return await res[parse]();
           } catch (e) {
             // A malformed body won't fix itself on retry; a timeout while reading will.
-            throw e.name === "AbortError" ? e : Object.assign(e, { fatal: true });
+            if (e.name === "AbortError") throw e;
+            throw tag(e, "parse", { fatal: true });
           }
         }
-        const err = new Error(`HTTP ${res.status}`);
-        err.status = res.status;
+        const err = tag(new Error(`HTTP ${res.status}`), "http", { status: res.status });
         // Only retry transient failures
         if (res.status < 500 && res.status !== 429) throw Object.assign(err, { fatal: true });
+        const ra = Number(res.headers?.get?.("Retry-After"));
+        if (ra > 0) wait = Math.min(ra * 1000, 5000);                    // respect the server, capped
         lastErr = err;
       } catch (e) {
+        if (signal?.aborted) throw tag(e, "aborted", { fatal: true });
         if (e.fatal) throw e;
-        lastErr = e;
+        lastErr = timedOut ? tag(e, "timeout") : e.kind ? e : tag(e, "network");
       } finally {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
       }
-      if (attempt < retries) await sleep(2 ** attempt * 300 + Math.random() * 200); // backoff + jitter
+      if (attempt < retries) await sleep(wait);
     }
     throw lastErr;
   }
@@ -130,17 +170,18 @@
       parse = "json",
       init = {},
       force = false,
+      signal,                // optional AbortSignal, e.g. cancel when the user starts a new download
     } = opts;
     const key = `${init.method || "GET"}:${url}`;
     const hit = memCache.get(key);
     const age = hit ? Date.now() - hit.time : Infinity;
 
     const refresh = () => {
-      if (inflight.has(key)) return inflight.get(key);   // dedupe concurrent calls
-      const p = fetchWithRetry(url, { retries, timeout, parse, init })
-        .then((data) => { remember(key, data); return data; })   // only successes are cached
-        .finally(() => inflight.delete(key));
-      inflight.set(key, p);
+      if (!signal && inflight.has(key)) return inflight.get(key);   // dedupe concurrent calls
+      const p = fetchWithRetry(url, { retries, timeout, parse, init, signal })
+        .then((data) => { remember(key, data); return data; })      // only successes are cached
+        .finally(() => { if (!signal) inflight.delete(key); });
+      if (!signal) inflight.set(key, p);
       return p;
     };
 
@@ -149,7 +190,7 @@
     try {
       return await refresh();
     } catch (err) {
-      if (hit) return hit.data;                          // graceful degradation: stale data beats an error
+      if (hit && err.kind !== "aborted") return hit.data;           // graceful degradation: stale data beats an error
       throw err;
     }
   };
@@ -242,7 +283,7 @@
 
   /* ───────────── Link prefetch on intent (faster navigations, no markup changes) ───────────── */
   const conn = navigator.connection;
-  const canPrefetch = !(conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType || ""));
+  const canPrefetch = !(lowEnd || conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType || ""));
   if (canPrefetch) {
     const done = new Set();
     let hoverTimer;
@@ -318,6 +359,126 @@
     location.reload();
   };
 
+  /* ───────────── Self-healing: never leave the user on a broken page ───────────── */
+  const isAppAsset = (u) => {
+    try { const x = new URL(u, location.href); return x.origin === location.origin && /^\/(js|css)\//.test(x.pathname); }
+    catch { return false; }
+  };
+
+  const clearAppCaches = async (everything = false) => {
+    if (!("caches" in window)) return;
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter((k) => k.startsWith("cliptoid-static-") || (everything && k.startsWith("cliptoid-")))
+      .map((k) => caches.delete(k)));
+  };
+
+  // Is the file reachable and sane straight from the server? If yes, OUR local copy is the problem.
+  const serverCopyIsGood = async (url) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const res = await fetch(url, { cache: "reload", signal: ctrl.signal, credentials: "same-origin" });
+      return res.ok && !/text\/html/i.test(res.headers.get("Content-Type") || "");
+    } catch { return false; } finally { clearTimeout(timer); }
+  };
+
+  let healing = false, failToast = false;
+  const onAssetFailure = async (url) => {
+    if (healing || reloading || failToast) return;
+    healing = true;
+    try {
+      const allowed = navigator.onLine && Date.now() - Number(lsGet(CFG.healKey) || 0) > CFG.healWindowMs;
+      if (allowed && (await serverCopyIsGood(url))) {
+        lsSet(CFG.healKey, String(Date.now()));   // set BEFORE reloading: guarantees no loop
+        await clearAppCaches();
+        reloading = true;
+        location.reload();
+        return;
+      }
+    } catch (err) { report("self-heal", err); }
+    healing = false;
+    failToast = true;                              // one calm message per page, with a way out
+    notify("Some parts of the page didn't load.", { actionLabel: "Reload", onAction: () => location.reload(), timeout: 0 });
+  };
+
+  // Capture phase: resource "error" events don't bubble. A JS file that arrives as HTML throws
+  // a SyntaxError instead of an element error, so both are handled.
+  addEventListener("error", (e) => {
+    const t = e.target;
+    if (t && t !== window && t.nodeType === 1) {
+      const url = t.tagName === "SCRIPT" ? t.src : t.tagName === "LINK" && /stylesheet/i.test(t.rel) ? t.href : "";
+      if (url && isAppAsset(url)) onAssetFailure(url);
+    } else if (e.error instanceof SyntaxError && e.filename && isAppAsset(e.filename)) {
+      onAssetFailure(e.filename);
+    }
+  }, true);
+
+  addEventListener("offline", () => notify("You're offline. Downloads need an internet connection."));
+
+  // Storage pressure: ask the worker to drop the oldest cached files before the browser errors out.
+  const checkStorage = async () => {
+    try {
+      const { usage, quota } = await navigator.storage.estimate();
+      if (quota && usage / quota > CFG.storageWarnRatio) navigator.serviceWorker.controller?.postMessage({ type: "TRIM" });
+    } catch {}
+  };
+
+  /* ───────────── Diagnostics + manual repair (run in the browser console) ───────────── */
+  const diagnose = async () => {
+    const mb = (n) => Math.round((n / 1048576) * 10) / 10;
+    const out = {
+      online: navigator.onLine,
+      controlled: Boolean(navigator.serviceWorker?.controller),
+      workerVersion: null,
+      lowEnd, deviceMemoryGB: navigator.deviceMemory ?? null, cores: navigator.hardwareConcurrency ?? null,
+      connection: conn ? { type: conn.effectiveType, saveData: conn.saveData, rttMs: conn.rtt } : null,
+      caches: {}, storage: null, jsHeapMB: null,
+      memCacheEntries: memCache.size, lastHealAt: lsGet(CFG.healKey),
+    };
+    try {
+      if ("caches" in window)
+        for (const k of await caches.keys()) out.caches[k] = (await (await caches.open(k)).keys()).length;
+    } catch {}
+    try {
+      const e = await navigator.storage?.estimate?.();
+      if (e) out.storage = { usedMB: mb(e.usage), quotaMB: mb(e.quota) };
+    } catch {}
+    if (performance.memory) out.jsHeapMB = { used: mb(performance.memory.usedJSHeapSize), limit: mb(performance.memory.jsHeapSizeLimit) };
+    const ctl = navigator.serviceWorker?.controller;
+    if (ctl) {
+      out.workerVersion = await new Promise((resolve) => {
+        const t = setTimeout(() => resolve(null), 1500);
+        const h = (ev) => {
+          if (ev.data?.type !== "VERSION") return;
+          clearTimeout(t); navigator.serviceWorker.removeEventListener("message", h); resolve(ev.data.version);
+        };
+        navigator.serviceWorker.addEventListener("message", h);
+        ctl.postMessage({ type: "GET_VERSION" });
+      });
+    }
+    console.log("[Cliptoid] diagnostics", out);
+    return out;
+  };
+
+  // Last resort: remove every Cliptoid cache and the worker itself, then reload clean.
+  const repair = async () => {
+    reloading = true;                              // stops registration / update prompts racing this
+    try { await clearAppCaches(true); } catch {}
+    try { (await navigator.serviceWorker?.getRegistrations?.() || []).forEach((r) => r.unregister()); } catch {}
+    location.reload();
+  };
+  // Support link: https://cliptoid.com/?cliptoid_repair=1
+  onReady(() => {
+    try {
+      const u = new URL(location.href);
+      if (u.searchParams.get("cliptoid_repair") !== "1") return;
+      u.searchParams.delete("cliptoid_repair");
+      history.replaceState(null, "", u.pathname + u.search + u.hash);   // strip it first: no repair loop
+      repair();
+    } catch {}
+  });
+
   /* ───────────── Service worker ───────────── */
   const swOk = "serviceWorker" in navigator && isSecureContext;
   if (swOk) {
@@ -335,6 +496,7 @@
     });
 
     const start = async () => {
+      if (reloading) return;                       // a repair / reload is in progress
       try {
         const reg = await navigator.serviceWorker.register(CFG.swUrl, { updateViaCache: "none" });
 
@@ -358,6 +520,7 @@
         watch(reg.waiting);
         watch(reg.installing);
         reg.addEventListener("updatefound", () => watch(reg.installing));
+        idle(checkStorage);
 
         let last = 0;
         const check = () => {
@@ -380,5 +543,5 @@
     else addEventListener("load", () => idle(start), { once: true });
   }
 
-  window.Cliptoid = Object.freeze({ smartFetch, notify });
+  window.Cliptoid = Object.freeze({ smartFetch, notify, diagnose, repair });
 })();

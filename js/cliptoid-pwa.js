@@ -11,6 +11,12 @@
     installSelector: "#dwapp_image, #cliptoid-install-result",
     inputSelector: "#main_page_text",
     pendingKey: "cliptoid.pendingUpdateInput",
+    // Set to your Cloudflare Worker origin, e.g. "https://api.cliptoid.com".
+    // The connection (DNS + TLS) is opened as soon as the user touches the input,
+    // so the first download request starts ~100-300 ms faster.
+    apiOrigin: null,
+    maxPrefetch: 8,               // max pages prefetched per visit
+    maxMemCache: 100,             // max entries kept by smartFetch
   };
 
   const onReady = (fn) =>
@@ -77,6 +83,12 @@
   const inflight = new Map();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  const remember = (key, data) => {
+    memCache.delete(key);                              // re-insert = most recent
+    memCache.set(key, { data, time: Date.now() });
+    if (memCache.size > CFG.maxMemCache) memCache.delete(memCache.keys().next().value); // drop oldest
+  };
+
   async function fetchWithRetry(url, { retries, timeout, parse, init }) {
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -84,7 +96,14 @@
       const timer = setTimeout(() => ctrl.abort(), timeout);
       try {
         const res = await fetch(url, { ...init, signal: ctrl.signal });
-        if (res.ok) return await res[parse]();
+        if (res.ok) {
+          try {
+            return await res[parse]();
+          } catch (e) {
+            // A malformed body won't fix itself on retry; a timeout while reading will.
+            throw e.name === "AbortError" ? e : Object.assign(e, { fatal: true });
+          }
+        }
         const err = new Error(`HTTP ${res.status}`);
         err.status = res.status;
         // Only retry transient failures
@@ -96,7 +115,7 @@
       } finally {
         clearTimeout(timer);
       }
-      if (attempt < retries) await sleep(2 ** attempt * 400 + Math.random() * 250); // backoff + jitter
+      if (attempt < retries) await sleep(2 ** attempt * 300 + Math.random() * 200); // backoff + jitter
     }
     throw lastErr;
   }
@@ -105,8 +124,8 @@
     const {
       ttl = 60_000,          // fresh window
       staleTtl = 600_000,    // serve stale + revalidate within this window
-      retries = 2,
-      timeout = 8000,
+      retries = 1,           // worst case ≈ 2 × timeout, never an endless spinner
+      timeout = 7000,
       parse = "json",
       init = {},
       force = false,
@@ -118,7 +137,7 @@
     const refresh = () => {
       if (inflight.has(key)) return inflight.get(key);   // dedupe concurrent calls
       const p = fetchWithRetry(url, { retries, timeout, parse, init })
-        .then((data) => { memCache.set(key, { data, time: Date.now() }); return data; })
+        .then((data) => { remember(key, data); return data; })   // only successes are cached
         .finally(() => inflight.delete(key));
       inflight.set(key, p);
       return p;
@@ -129,10 +148,31 @@
     try {
       return await refresh();
     } catch (err) {
-      if (hit) return hit.data;                          // graceful degradation: any stale data beats an error
+      if (hit) return hit.data;                          // graceful degradation: stale data beats an error
       throw err;
     }
   };
+
+  /* ───────────── Warm the API connection when the user is about to use it ───────────── */
+  if (CFG.apiOrigin) {
+    let warmed = false;
+    const warm = () => {
+      if (warmed) return;
+      warmed = true;
+      const link = document.createElement("link");
+      link.rel = "preconnect";
+      link.href = CFG.apiOrigin;
+      link.crossOrigin = "anonymous";
+      document.head.append(link);
+    };
+    onReady(() => {
+      const input = document.querySelector(CFG.inputSelector);
+      if (!input) return;
+      ["focus", "pointerdown", "input", "paste"].forEach((t) =>
+        input.addEventListener(t, warm, { once: true, passive: true })
+      );
+    });
+  }
 
   /* ───────────── Navigation menu ───────────── */
   onReady(() => {
@@ -169,7 +209,8 @@
   onReady(() => { if (isStandalone()) hideInstallButtons(); });
 
   addEventListener("beforeinstallprompt", (e) => {
-    if (!installButtons().length) return;
+    // The event can fire before the DOM is parsed, so only bail out once buttons can be known.
+    if (document.readyState !== "loading" && !installButtons().length) return;
     e.preventDefault();
     installPrompt = e;
   });
@@ -205,10 +246,13 @@
     const done = new Set();
     let hoverTimer;
     const prefetch = (a) => {
+      if (done.size >= CFG.maxPrefetch || document.hidden) return;
       if (!a || a.target === "_blank" || a.hasAttribute("download") || "noPrefetch" in a.dataset) return;
-      const url = new URL(a.href, location.href);
-      if (url.origin !== location.origin || url.hash && url.pathname === location.pathname) return;
-      if (url.href === location.href || done.has(url.href)) return;
+      let url;
+      try { url = new URL(a.href, location.href); } catch { return; }
+      if (url.origin !== location.origin) return;
+      if (url.pathname === location.pathname && url.search === location.search) return; // same page / #hash
+      if (done.has(url.href)) return;
       done.add(url.href);
       const link = document.createElement("link");
       link.rel = "prefetch";
@@ -220,10 +264,10 @@
     document.addEventListener("pointerover", (e) => {
       if (e.pointerType === "touch") return;
       const a = linkFrom(e);
-      if (a) hoverTimer = setTimeout(() => prefetch(a), 80);
+      if (a) hoverTimer = setTimeout(() => prefetch(a), 65);
     }, { passive: true });
     document.addEventListener("pointerout", () => clearTimeout(hoverTimer), { passive: true });
-    document.addEventListener("touchstart", (e) => prefetch(linkFrom(e)), { passive: true });
+    document.addEventListener("pointerdown", (e) => prefetch(linkFrom(e)), { passive: true }); // mouse + touch, ~100 ms before click
   }
 
   /* ───────────── htmx friendly errors ───────────── */

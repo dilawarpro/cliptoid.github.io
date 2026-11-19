@@ -51,21 +51,23 @@
   const MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024; // hard cap for in-browser slideshow video building
   const API_HEDGE_MS = 2500; // start a parallel backup request if no answer by then
   const API_DEADLINE_MS = 15000; // give up on the whole lookup after this
-  const INFO_STORAGE_KEY = "cliptoid.infoCache.v4"; // v4: adds signed download tokens
+  const INFO_STORAGE_KEY = "cliptoid.infoCache.v5"; // v5: adds post id + canonical url (history de-duplication)
   const API_RATE_LIMIT_DELAY_MS = 1100; // wait before retrying after a rate-limit response
   const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // CDN links expire, keep cache short
   const INFO_CACHE_MAX = 50;
   const infoCache = new Map(); // normalized post URL -> { data, time }
 
-  // true  = the browser starts the download itself, instantly. The user can leave the page.
-  //         (The page cannot read a native download's progress, so the fill is an estimate
-  //          until the download is handed to the browser. The label says "Starting…", not "Downloading…".)
-  // false = the file is fetched inside the page: real percentage, but the user must stay.
-  const NATIVE_DOWNLOADS = true;
-  const NATIVE_GRACE_MS = 2000; // how long we wait for an error before showing the checkmark
+  // false = the file is fetched inside the page, so the progress bar shows REAL bytes received
+  //         and the checkmark only appears after the whole file arrived and was saved.
+  //         (Files are fetched as several parallel byte ranges for speed.)
+  // true  = the browser starts the download itself, instantly. The page cannot see a native
+  //         download's progress, so the checkmark would only mean "handed to the browser".
+  // Files too large to hold in memory (BLOB_LIMIT) still use the native hand-off as a fallback.
+  const NATIVE_DOWNLOADS = false;
+  const NATIVE_GRACE_MS = 2000; // how long we wait for an error before showing the checkmark (native hand-off only)
 
   let isLoading = false;
-  let currentResult = { title: "", cover: "", tokens: null };
+  let currentResult = { title: "", cover: "", tokens: null, id: "", canonicalUrl: "" };
   let activeController = null; // AbortController for the in-flight API request
   let activeUrl = ""; // URL being fetched right now
   let lastRenderedUrl = ""; // URL whose result is currently on screen
@@ -354,10 +356,41 @@
   const historyList = createElement("ul", "cliptoid-history__list");
   historyPanel.append(historyHeader, historyFilters, historyList);
 
+  // ---------------------------------------------------------------------------
+  // History identity: one entry per post, however many times / in which format it is saved
+  // (video, HD, MP3, ZIP, single photo, slideshow video) and however the link was written
+  // (vt./vm. short link, full link, with or without tracking parameters).
+  // ---------------------------------------------------------------------------
+  const postIdFromUrl = (value) => {
+    const match = String(value || "").match(/\/(?:video|photo)\/(\d{8,})/);
+    return match ? match[1] : "";
+  };
+
+  const historyKeyFor = (info, sourceUrl) => {
+    const id = String(info?.id || "") || postIdFromUrl(info?.canonicalUrl) || postIdFromUrl(sourceUrl);
+    if (/^\d{8,}$/.test(id)) return `id:${id}`;
+    const normalized = extractTikTokUrl(String(sourceUrl || ""));
+    return normalized ? `url:${normalized.replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase()}` : "";
+  };
+
+  const entryKeyOf = (entry) => entry?.key || historyKeyFor({}, entry?.sourceUrl);
+
+  // Newest first: keep the first (newest) entry of every post, drop older copies.
+  const dedupeHistory = (history) => {
+    const seen = new Set();
+    return history.filter((entry) => {
+      const key = entryKeyOf(entry);
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
   const readDownloadHistory = () => {
     try {
       const history = JSON.parse(localStorage.getItem(historyStorageKey) || "[]");
-      return Array.isArray(history) ? history : [];
+      return Array.isArray(history) ? dedupeHistory(history) : [];
     } catch {
       return [];
     }
@@ -678,18 +711,27 @@
     closeButton.focus({ preventScroll: true });
   };
 
+  // Called only after a download has really finished. Saving the same post again (any format,
+  // any link shape) replaces its earlier entry and moves it to the top with the new time,
+  // so the list never shows the same media twice.
   const saveDownloadHistory = async (info, sourceUrl) => {
     markActiveDay(1);
     const downloadCount = incrementDownloadCount();
     const submittedUrl = String(sourceUrl || "").trim();
+    const key = historyKeyFor(info, submittedUrl);
+    const earlier = key ? readDownloadHistory().find((savedEntry) => entryKeyOf(savedEntry) === key) : null;
+    const thumbnail = earlier?.thumbnail || (await createThumbnail(info.cover));
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title: info.title || "TikTok video",
-      thumbnail: await createThumbnail(info.cover),
-      sourceUrl: extractTikTokUrl(submittedUrl) || "",
+      key,
+      title: info.title || earlier?.title || "TikTok video",
+      thumbnail,
+      sourceUrl: extractTikTokUrl(submittedUrl) || earlier?.sourceUrl || "",
       downloadedAt: new Date().toISOString(),
     };
-    const history = [entry, ...readDownloadHistory()].slice(0, 100);
+    // Read again after the awaits above, so two downloads finishing together cannot both insert.
+    const others = readDownloadHistory().filter((savedEntry) => !key || entryKeyOf(savedEntry) !== key);
+    const history = [entry, ...others].slice(0, 100);
     try {
       localStorage.setItem(historyStorageKey, JSON.stringify(history));
     } catch {
@@ -986,40 +1028,167 @@
 
   const BLOB_LIMIT = 120 * 1024 * 1024;
 
-  // Downloads the file inside the page with progress (only used when NATIVE_DOWNLOADS is false).
-  // Shows the Worker's real error message.
+  // Parallel byte-range download. TikTok's CDN (and the Worker in between) usually serves one
+  // connection slower than several side by side, so the file is cut into DL_CHUNK pieces that
+  // are fetched DL_CONCURRENCY at a time. If the server ignores Range, it simply streams the
+  // whole file through one connection, exactly as before.
+  const DL_CHUNK = 2 * 1024 * 1024;
+  const DL_CONCURRENCY = 4;
+  const DL_SEGMENT_ATTEMPTS = 3;
+
+  const tooLargeError = () => Object.assign(new Error("large"), { tooLarge: true });
+
+  // Turns a failed Worker response into an Error carrying the Worker's real message.
+  const errorFromResponse = async (response) => {
+    let body = {};
+    try { body = await response.json(); } catch {}
+    const error = new Error(body.error || `The download service returned HTTP ${response.status}.`);
+    error.retryable = body.retryable !== false;
+    error.expired = response.status === 410 || body.code === "LINK_EXPIRED";
+    return error;
+  };
+
+  const isFailedResponse = (response) => {
+    const type = (response.headers.get("content-type") || "").split(";")[0];
+    return { failed: !response.ok || /json|html/i.test(type), type };
+  };
+
+  // Reads a response body completely; onBytes(n) is called for every piece received.
+  const readAllBytes = async (response, onBytes) => {
+    if (!response.body) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      onBytes(bytes.byteLength);
+      return [bytes];
+    }
+    const reader = response.body.getReader();
+    const parts = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      onBytes(value.byteLength);
+    }
+    return parts;
+  };
+
+  const sizeOf = (parts) => parts.reduce((sum, part) => sum + part.byteLength, 0);
+
+  // Downloads the file inside the page with real progress (used while NATIVE_DOWNLOADS is false).
+  // Resolves only when EVERY byte arrived and matches the announced size.
   const fetchMediaBlob = async (href, onProgress) => {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 180000);
-    try {
-      const response = await fetch(href, { mode: "cors", credentials: "omit", cache: "no-store", signal: controller.signal });
-      const type = (response.headers.get("content-type") || "").split(";")[0];
-      if (!response.ok || /json|html/i.test(type)) {
-        let body = {};
-        try { body = await response.json(); } catch {}
-        const error = new Error(body.error || `The download service returned HTTP ${response.status}.`);
-        error.retryable = body.retryable !== false;
-        error.expired = response.status === 410 || body.code === "LINK_EXPIRED";
-        throw error;
-      }
+    const timer = window.setTimeout(() => controller.abort(), 300000);
+    const request = (headers) =>
+      fetch(href, { mode: "cors", credentials: "omit", cache: "no-store", signal: controller.signal, headers });
+
+    // One connection for the whole file (server without Range support, or unknown size).
+    const streamWhole = async (response) => {
+      const { failed, type } = isFailedResponse(response);
+      if (failed) throw await errorFromResponse(response);
       const total = Number(response.headers.get("content-length")) || 0;
-      if (!response.body || total > BLOB_LIMIT) throw Object.assign(new Error("large"), { tooLarge: true });
-      const reader = response.body.getReader();
-      const chunks = [];
-      let received = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.byteLength;
-        if (received > BLOB_LIMIT) {
-          await reader.cancel();
-          throw Object.assign(new Error("large"), { tooLarge: true });
-        }
-        onProgress(received, total);
+      if (total > BLOB_LIMIT) {
+        response.body?.cancel().catch(() => {});
+        throw tooLargeError();
       }
+      let received = 0;
+      const parts = await readAllBytes(response, (n) => {
+        received += n;
+        if (received > BLOB_LIMIT) throw tooLargeError();
+        onProgress(received, total);
+      });
       if (!received) throw new Error("The server returned an empty file.");
-      return new Blob(chunks, { type: type || "application/octet-stream" });
+      if (total && received !== total) {
+        throw Object.assign(new Error("The download was interrupted before it finished. Please try again."), { retryable: true });
+      }
+      return new Blob(parts, { type: type || "application/octet-stream" });
+    };
+
+    try {
+      const first = await request({ Range: `bytes=0-${DL_CHUNK - 1}` });
+      if (first.status !== 206) return await streamWhole(first);
+
+      const { failed, type } = isFailedResponse(first);
+      if (failed) throw await errorFromResponse(first);
+      const range = (first.headers.get("content-range") || "").match(/^bytes\s+(\d+)-(\d+)\/(\d+)$/i);
+      const total = range ? Number(range[3]) : 0;
+      if (!range || Number(range[1]) !== 0 || !total) {
+        // Size unknown: restart as one plain stream rather than guess.
+        first.body?.cancel().catch(() => {});
+        return await streamWhole(await request({}));
+      }
+      if (total > BLOB_LIMIT) {
+        first.body?.cancel().catch(() => {});
+        throw tooLargeError();
+      }
+
+      const firstEnd = Number(range[2]);
+      const ranges = [];
+      for (let start = firstEnd + 1; start < total; start += DL_CHUNK) {
+        ranges.push([start, Math.min(total - 1, start + DL_CHUNK - 1)]);
+      }
+
+      const results = new Array(ranges.length + 1);
+      const received = new Array(ranges.length + 1).fill(0);
+      const report = () => onProgress(received.reduce((sum, n) => sum + n, 0), total);
+
+      const firstDone = readAllBytes(first, (n) => {
+        received[0] += n;
+        report();
+      }).then((parts) => {
+        if (sizeOf(parts) !== firstEnd + 1) {
+          throw Object.assign(new Error("The download was interrupted before it finished. Please try again."), { retryable: true });
+        }
+        results[0] = parts;
+      });
+
+      const fetchSegment = async (slot, [start, end]) => {
+        for (let attempt = 0; ; attempt += 1) {
+          received[slot] = 0;
+          try {
+            const response = await request({ Range: `bytes=${start}-${end}` });
+            const state = isFailedResponse(response);
+            if (state.failed) throw await errorFromResponse(response);
+            const got = (response.headers.get("content-range") || "").match(/^bytes\s+(\d+)-(\d+)\//i);
+            if (response.status !== 206 || !got || Number(got[1]) !== start) {
+              response.body?.cancel().catch(() => {});
+              throw Object.assign(new Error("The server did not return the requested part of the file."), { retryable: true });
+            }
+            const parts = await readAllBytes(response, (n) => {
+              received[slot] += n;
+              report();
+            });
+            if (sizeOf(parts) !== end - start + 1) {
+              throw Object.assign(new Error("A part of the download came back incomplete."), { retryable: true });
+            }
+            return parts;
+          } catch (error) {
+            if (controller.signal.aborted || error.expired || attempt >= DL_SEGMENT_ATTEMPTS - 1) throw error;
+            await sleep(400 * (attempt + 1));
+          }
+        }
+      };
+
+      let next = 0;
+      const runLane = async () => {
+        for (;;) {
+          const index = next++;
+          if (index >= ranges.length) return;
+          results[index + 1] = await fetchSegment(index + 1, ranges[index]);
+        }
+      };
+      await Promise.all([
+        firstDone,
+        ...Array.from({ length: Math.min(DL_CONCURRENCY, ranges.length) }, runLane),
+      ]);
+
+      const parts = results.flat();
+      if (sizeOf(parts) !== total) {
+        throw Object.assign(new Error("The download was incomplete. Please try again."), { retryable: true });
+      }
+      return new Blob(parts, { type: type || "application/octet-stream" });
+    } catch (error) {
+      controller.abort(); // stop every other segment still running
+      throw error;
     } finally {
       window.clearTimeout(timer);
     }
@@ -1109,6 +1278,8 @@
         setFill(p);
         setButtonLabel(button, `${verb} ${p}%`);
       },
+      // Call ONLY once the file is completely received and saved (or handed over, for the
+      // native fallback of very large files).
       done(text = "Download started") {
         window.clearTimeout(resetTimer);
         button.classList.remove("is-progress");
@@ -1126,7 +1297,7 @@
     return api;
   };
 
-  // Smooth eased fill while the browser takes over the download (see NATIVE_DOWNLOADS).
+  // Smooth eased fill while the browser takes over the download (native hand-off only).
   const startSimulatedProgress = (progress, durationMs) => {
     const started = performance.now();
     const timer = window.setInterval(() => {
@@ -1139,6 +1310,7 @@
 
   /* ---------------------------------------------------------------------
      Native download: the browser's own download manager does the work
+     (only used when NATIVE_DOWNLOADS is true, or for files too large to hold in memory)
      --------------------------------------------------------------------- */
 
   // Points a hidden iframe at the Worker's /api/download URL. The Worker answers with
@@ -1195,30 +1367,40 @@
       }, graceMs);
     });
 
-  // Fallback mode (NATIVE_DOWNLOADS = false): fetch inside the page with REAL progress.
+  // In-page mode: fetch inside the page with REAL progress, then save. Returns only after
+  // the complete file was received and handed to the browser's save mechanism.
   const inPageDownload = async (href, filename, progress) => {
     const blob = await fetchMediaBlob(href, (received, total) => {
       const percent = total ? (received / total) * 100 : 90 * (1 - Math.exp(-received / 6e6));
       progress.set(percent, "Downloading…");
     });
+    if (!blob.size) throw new Error("The server returned an empty file.");
     saveBlob(blob, filename);
   };
 
   // One download from click to checkmark. `buildHref(tokens)` returns the Worker URL.
   // If the link has expired (or TikTok hiccuped) it fetches fresh links once and retries.
+  // The checkmark / "done" state is only reached after attemptOnce() resolved, i.e. after the
+  // file was fully downloaded and saved. Every failure path ends in progress.fail().
   const runDownload = async ({ progress, status, resultInfo, postUrl, buildHref, filename, graceMs }) => {
     progress.start();
     status.textContent = "Starting your download…";
+    let nativeFallbackUsed = false;
     const lateError = (error) => {
       status.textContent = error.message || "The download could not be started. Please try again.";
       progress.fail();
     };
     const attemptOnce = async (href) => {
-      if (NATIVE_DOWNLOADS) return nativeHandoff(href, progress, { graceMs, onLateError: lateError });
+      if (NATIVE_DOWNLOADS) {
+        nativeFallbackUsed = true;
+        return nativeHandoff(href, progress, { graceMs, onLateError: lateError });
+      }
       try {
         await inPageDownload(href, filename, progress);
       } catch (error) {
-        if (!error.tooLarge) throw error; // very large file: let the browser do it
+        if (!error.tooLarge) throw error; // real failure: report it, never show a checkmark
+        // Too large to hold in memory: let the browser download it itself.
+        nativeFallbackUsed = true;
         await nativeHandoff(href, progress, { graceMs, onLateError: lateError });
       }
     };
@@ -1228,10 +1410,10 @@
       try {
         await attemptOnce(href);
         saveDownloadHistory(resultInfo, postUrl);
-        status.textContent = NATIVE_DOWNLOADS
+        status.textContent = nativeFallbackUsed
           ? "Your download has started. You can keep browsing."
           : "Your download is complete.";
-        progress.done(NATIVE_DOWNLOADS ? "Download started" : "Downloaded");
+        progress.done(nativeFallbackUsed ? "Download started" : "Downloaded");
         return;
       } catch (error) {
         const retryable = error.expired || error.retryable || error instanceof TypeError;
@@ -1248,7 +1430,9 @@
         status.textContent =
           error instanceof TypeError
             ? "Could not reach the download service. Check your connection and try again."
-            : error.message || "Could not start the download. Please try again.";
+            : error.name === "AbortError"
+              ? "The download took too long and was stopped. Please try again."
+              : error.message || "Could not start the download. Please try again.";
         progress.fail();
         return;
       }
@@ -1317,7 +1501,7 @@
         resultInfo,
         postUrl,
         filename: `${base}.${many ? "zip" : "jpg"}`,
-        // The Worker collects every slide before it answers, so give a ZIP a little longer.
+        // Only used if a file is too large for the in-page download and the browser takes over.
         graceMs: many ? Math.min(7000, 1500 + 300 * imageUrls.length) : NATIVE_GRACE_MS,
         buildHref: () => buildDownloadUrl(postUrl, many ? "zip" : "image", base, null),
       });
@@ -1360,15 +1544,30 @@
 
 
   /* ---------------------------------------------------------------------
-     Slideshow video (built in the browser). Same logic as before; the button now
-     shows real progress: loading images 0–30 %, recording 30–98 %, then the checkmark.
+     Slideshow video (built in the browser). The button shows real progress: loading images
+     0–30 %, recording 30–98 %, then the checkmark once the video is built and saved.
      Note: the browser records the slideshow in real time, so a 30 s sound takes ~30 s.
+     Keep this tab in the foreground while it records.
+
+     - Resolution: the canvas follows the slides' own resolution (capped at 1080x1920) instead
+       of a fixed 720x1280, and the encoder gets a high bitrate, so pictures stay sharp.
+     - Sound: fetched with retries (token link, then plain link) and decoded either with Web
+       Audio or, if the browser cannot decode the file that way, through an <audio> element.
+     - Animation: each slide holds, then the next one pushes it out from right to left with an
+       eased, time-based slide (drawn every frame, so it is smooth and in sync with the sound).
      --------------------------------------------------------------------- */
 
-  const addSlideshowVideoLink = (parent, imageUrls, audioUrl, title, postDurationSeconds = 0) => {
+  const SLIDESHOW_FPS = 30;
+  const SLIDESHOW_MAX_LONG_SIDE = 1920;
+  const SLIDESHOW_MAX_SHORT_SIDE = 1080;
+  const SLIDE_TRANSITION_MS = 600;
+  const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  const addSlideshowVideoLink = (parent, imageUrls, audioUrl, title, postDurationSeconds = 0, postUrl = "", audioFallbackUrl = null) => {
     if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return false;
     const VIDEO_LABEL = "Download as Video (with sound)";
     const supportedTypes = [
+      "video/mp4;codecs=avc1.640028,mp4a.40.2",
       "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
       "video/mp4",
       "video/webm;codecs=vp9,opus",
@@ -1381,6 +1580,8 @@
     button.type = "button";
     addButtonIcon(button, "video");
     const progress = createProgressButton(button, VIDEO_LABEL);
+    // Captured now, so the history entry belongs to THIS post even if another link is looked up later.
+    const resultInfo = { ...currentResult, title };
 
     button.addEventListener("click", async () => {
       if (progress.busy) return;
@@ -1391,44 +1592,78 @@
 
       let audioContext = null;
       let audioSource = null;
+      let audioElement = null;
+      let audioElementUrl = "";
+      let audioTracks = [];
       let audioDurationSeconds = 0;
       let audioFailed = false;
+      let audioReason = "";
       let recorder;
       let stream;
       const slideBitmaps = [];
       try {
-        const canvas = createElement("canvas");
-        canvas.width = 720;
-        canvas.height = 1280;
-        const context = canvas.getContext("2d");
-        stream = canvas.captureStream(24);
-
         // Audio and images are fetched in parallel instead of one after another.
+        const fetchAudioBytes = async () => {
+          const sources = [...new Set([audioUrl, audioFallbackUrl].filter(Boolean))];
+          let lastError = new Error("audio_unavailable");
+          for (const source of sources) {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              try {
+                const response = await fetch(source, { mode: "cors", credentials: "omit", cache: "no-store" });
+                const type = response.headers.get("content-type") || "";
+                if (!response.ok || /json|html/i.test(type)) throw new Error(`audio_http_${response.status}`);
+                const bytes = await response.arrayBuffer();
+                if (!bytes.byteLength) throw new Error("audio_empty");
+                return { bytes, type };
+              } catch (error) {
+                lastError = error;
+                await sleep(500);
+              }
+            }
+          }
+          throw lastError;
+        };
+
         const loadAudio = async () => {
           if (!audioUrl) return;
           if (!(window.AudioContext || window.webkitAudioContext)) {
             audioFailed = true;
+            audioReason = "audio_unsupported";
             return;
           }
           try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             const resumed = audioContext.resume(); // started inside the click gesture
-            const audioResponse = await fetch(audioUrl, { mode: "cors", credentials: "omit" });
-            if (!audioResponse.ok) {
-              audioFailed = true;
-              return;
-            }
-            const audioBuffer = await audioContext.decodeAudioData(await audioResponse.arrayBuffer());
+            const { bytes, type } = await fetchAudioBytes();
             await resumed;
-            audioDurationSeconds = audioBuffer.duration;
             const audioDestination = audioContext.createMediaStreamDestination();
-            audioSource = audioContext.createBufferSource();
-            audioSource.buffer = audioBuffer;
-            audioSource.connect(audioDestination);
-            audioDestination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
-          } catch {
+            try {
+              const audioBuffer = await audioContext.decodeAudioData(bytes.slice(0));
+              audioDurationSeconds = audioBuffer.duration;
+              audioSource = audioContext.createBufferSource();
+              audioSource.buffer = audioBuffer;
+              audioSource.connect(audioDestination);
+            } catch {
+              // Web Audio could not decode this file: let an <audio> element decode it instead.
+              audioElementUrl = URL.createObjectURL(new Blob([bytes], { type: /^audio\//i.test(type) ? type.split(";")[0] : "audio/mpeg" }));
+              audioElement = new Audio();
+              audioElement.preload = "auto";
+              audioElement.src = audioElementUrl;
+              await new Promise((resolve, reject) => {
+                audioElement.addEventListener("loadedmetadata", resolve, { once: true });
+                audioElement.addEventListener("error", () => reject(new Error("audio_decode_failed")), { once: true });
+              });
+              audioDurationSeconds = Number.isFinite(audioElement.duration) ? audioElement.duration : 0;
+              audioContext.createMediaElementSource(audioElement).connect(audioDestination);
+            }
+            audioTracks = audioDestination.stream.getAudioTracks();
+            if (!audioTracks.length) throw new Error("audio_no_track");
+          } catch (error) {
             audioFailed = true;
+            audioReason = error?.message || "audio_failed";
             audioSource = null;
+            audioElement = null;
+            audioTracks = [];
             if (audioContext) await audioContext.close().catch(() => {});
             audioContext = null;
           }
@@ -1452,6 +1687,7 @@
           if (receivedImageBytes > MAX_DOWNLOAD_BYTES) {
             throw new Error("These slideshow images are too large to combine safely in your browser.");
           }
+          // Decoded at full size; nothing is resized or re-compressed here.
           const bitmap = await createImageBitmap(imageBlob);
           loadedImages += 1;
           status.textContent = `Loading slideshow images… ${loadedImages}/${imageUrls.length}`;
@@ -1469,6 +1705,25 @@
 
         await Promise.all([loadAudio(), loadSlides()]);
 
+        // Canvas = the slides' own size (largest width/height among them), only scaled DOWN
+        // when it would exceed 1080x1920, and rounded to even numbers for the video encoder.
+        const sourceWidth = Math.max(...slideBitmaps.map((bitmap) => bitmap.width));
+        const sourceHeight = Math.max(...slideBitmaps.map((bitmap) => bitmap.height));
+        const fit = Math.min(
+          1,
+          SLIDESHOW_MAX_LONG_SIDE / Math.max(sourceWidth, sourceHeight),
+          SLIDESHOW_MAX_SHORT_SIDE / Math.min(sourceWidth, sourceHeight)
+        );
+        const even = (value) => Math.max(2, Math.round(value / 2) * 2);
+        const canvas = createElement("canvas");
+        canvas.width = even(sourceWidth * fit);
+        canvas.height = even(sourceHeight * fit);
+        const context = canvas.getContext("2d");
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        stream = canvas.captureStream(SLIDESHOW_FPS);
+        audioTracks.forEach((track) => stream.addTrack(track));
+
         // Video length: the sound's real duration if it loaded, else the post's duration,
         // else 2.2 seconds per image. Slides share the total time equally.
         const postDuration = Number(postDurationSeconds);
@@ -1479,9 +1734,24 @@
           : validPostDuration
             ? postDuration
             : imageUrls.length * 2.2;
-        const slideDurationMs = (totalDurationSeconds * 1000) / slideBitmaps.length;
+        const totalMs = totalDurationSeconds * 1000;
+        const slideCount = slideBitmaps.length;
+        const slideDurationMs = totalMs / slideCount;
+        const transitionMs = slideCount > 1 ? Math.min(SLIDE_TRANSITION_MS, slideDurationMs * 0.3) : 0;
+        const holdMs = slideDurationMs - transitionMs;
+
         const chunks = [];
-        recorder = new MediaRecorder(stream, { mimeType });
+        const pixels = canvas.width * canvas.height;
+        const recorderOptions = {
+          mimeType,
+          videoBitsPerSecond: Math.round(Math.min(16e6, Math.max(8e6, pixels * SLIDESHOW_FPS * 0.2))),
+          audioBitsPerSecond: 192000,
+        };
+        try {
+          recorder = new MediaRecorder(stream, recorderOptions);
+        } catch {
+          recorder = new MediaRecorder(stream, { mimeType });
+        }
         const recordingFinished = new Promise((resolve, reject) => {
           recorder.addEventListener("dataavailable", (event) => {
             if (event.data.size) chunks.push(event.data);
@@ -1489,41 +1759,88 @@
           recorder.addEventListener("error", () => reject(new Error("The browser could not encode this slideshow.")), { once: true });
           recorder.addEventListener("stop", resolve, { once: true });
         });
-        const drawSlide = (bitmap) => {
-          context.fillStyle = "#000";
-          context.fillRect(0, 0, canvas.width, canvas.height);
+
+        const drawFitted = (bitmap, offsetX) => {
           const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
           const width = bitmap.width * scale;
           const height = bitmap.height * scale;
-          context.drawImage(bitmap, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+          context.drawImage(bitmap, offsetX + (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
         };
-        drawSlide(slideBitmaps[0]);
-        recorder.start(500);
-        audioSource?.start();
-
-        const recordingStarted = performance.now();
-        const ticker = window.setInterval(() => {
-          const x = Math.min(1, (performance.now() - recordingStarted) / (totalDurationSeconds * 1000));
-          progress.set(30 + 68 * x, "Creating video…");
-        }, 120);
-        try {
-          for (let index = 0; index < slideBitmaps.length; index += 1) {
-            if (index > 0) drawSlide(slideBitmaps[index]);
-            status.textContent = `Creating slideshow video… slide ${index + 1} of ${imageUrls.length}`;
-            await new Promise((resolve) => window.setTimeout(resolve, slideDurationMs));
+        // Draws the picture for a point in time: the current slide, or, during the last
+        // transitionMs of its slot, the current slide sliding out to the left while the next
+        // one slides in from the right.
+        const renderAt = (elapsedMs) => {
+          const index = Math.min(slideCount - 1, Math.floor(elapsedMs / slideDurationMs));
+          const local = elapsedMs - index * slideDurationMs;
+          context.fillStyle = "#000";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          if (index < slideCount - 1 && local > holdMs) {
+            const eased = easeInOutCubic((local - holdMs) / transitionMs);
+            drawFitted(slideBitmaps[index], -eased * canvas.width);
+            drawFitted(slideBitmaps[index + 1], canvas.width - eased * canvas.width);
+          } else {
+            drawFitted(slideBitmaps[index], 0);
           }
-        } finally {
-          window.clearInterval(ticker);
+          return index;
+        };
+
+        renderAt(0);
+        recorder.start(500);
+        const recordingStarted = performance.now();
+        audioSource?.start();
+        if (audioElement) {
+          try {
+            await audioElement.play();
+          } catch {
+            audioFailed = true;
+            audioReason = "audio_play_blocked";
+          }
         }
+
+        // Frame loop: requestAnimationFrame for smoothness, plus a slow timer so the recording
+        // always finishes even if the browser pauses animation frames.
+        await new Promise((resolve) => {
+          let finished = false;
+          let shownSlide = -1;
+          const tick = () => {
+            if (finished) return;
+            const elapsed = performance.now() - recordingStarted;
+            const slide = renderAt(Math.min(elapsed, totalMs));
+            if (slide !== shownSlide) {
+              shownSlide = slide;
+              status.textContent = `Creating slideshow video… slide ${slide + 1} of ${slideCount}`;
+            }
+            progress.set(30 + 68 * Math.min(1, elapsed / totalMs), "Creating video…");
+            if (elapsed >= totalMs) {
+              finished = true;
+              window.clearInterval(backupTimer);
+              resolve();
+            }
+          };
+          const frame = () => {
+            if (finished) return;
+            tick();
+            if (!finished) window.requestAnimationFrame(frame);
+          };
+          const backupTimer = window.setInterval(tick, 250);
+          window.requestAnimationFrame(frame);
+        });
+
+        await sleep(200); // let the encoder take the last frame
         recorder.stop();
         await recordingFinished;
+        try { audioSource?.stop(); } catch {}
+        audioElement?.pause();
         const blob = new Blob(chunks, { type: mimeType });
+        if (!blob.size) throw new Error("The browser produced an empty video. Please try again.");
         saveBlob(blob, filename);
-        saveDownloadHistory({ ...currentResult, title }, input.value.trim());
+        saveDownloadHistory(resultInfo, postUrl || input.value.trim());
         status.textContent =
           `Your slideshow video download has started.` +
           (extension === "webm" ? " This browser generated WebM instead of MP4." : "") +
-          (audioFailed && audioUrl ? " The sound could not be loaded, so this video has no audio." : "");
+          (audioFailed && audioUrl ? ` The sound could not be added, so this video has no audio.${DEBUG && audioReason ? ` (${audioReason})` : ""}` : "") +
+          (!audioUrl ? " This post has no separate sound, so the video has no audio." : "");
+        if (DEBUG && audioFailed) console.warn("[cliptoid] slideshow audio failed:", audioReason);
         progress.done("Download started");
       } catch (error) {
         if (recorder?.state === "recording") recorder.stop();
@@ -1532,6 +1849,8 @@
       } finally {
         slideBitmaps.forEach((bitmap) => bitmap.close?.());
         stream?.getTracks().forEach((track) => track.stop());
+        audioElement?.pause();
+        if (audioElementUrl) URL.revokeObjectURL(audioElementUrl);
         if (audioContext) await audioContext.close().catch(() => {});
       }
     });
@@ -1660,6 +1979,8 @@
     const music = raw.music ?? raw.music_info?.play;
     const duration = Number(raw.duration);
     return {
+      id: raw.id === undefined || raw.id === null ? "" : String(raw.id),
+      canonicalUrl: typeof raw.url === "string" ? raw.url : "",
       title: typeof raw.title === "string" ? raw.title.trim() : "",
       cover: asUrl(raw.cover || raw.origin_cover || raw.thumbnail),
       creator: String(author.username || author.unique_id || author.nickname || ""),
@@ -1814,7 +2135,13 @@
     const soundOnly = isTikTokSoundUrl(postUrl);
     const slideshowImages = info.images.map(safeMediaUrl).filter(Boolean);
     const previewUrl = safeImageUrl(info.cover);
-    currentResult = { title, cover: previewUrl || slideshowImages[0] || "", tokens: info.tokens || null };
+    currentResult = {
+      title,
+      cover: previewUrl || slideshowImages[0] || "",
+      tokens: info.tokens || null,
+      id: info.id || "",
+      canonicalUrl: info.canonicalUrl || "",
+    };
     const creatorName = info.creator;
     const details = createElement("div", "cliptide-result__details");
     const heading = createElement(
@@ -1865,7 +2192,9 @@
     } else if (slideshowImages.length) {
       // Slideshow / image post: video with sound, photo(s), MP3 sound.
       const slideshowAudio = info.hasAudio ? buildDownloadUrl(postUrl, "music", getDownloadBaseName(), info.tokens) : null;
-      if (!addSlideshowVideoLink(downloads, slideshowImages, slideshowAudio, title || "TikTok-slideshow", info.duration)) {
+      // Second chance for the sound: the plain link (no signed token) in case the token expired.
+      const slideshowAudioFallback = info.hasAudio ? buildDownloadUrl(postUrl, "music", getDownloadBaseName(), null) : null;
+      if (!addSlideshowVideoLink(downloads, slideshowImages, slideshowAudio, title || "TikTok-slideshow", info.duration, postUrl, slideshowAudioFallback)) {
         downloads.append(createElement("p", "cliptide-status cliptide-status--info", "Video creation is not supported by this browser. You can still download the photos and the audio."));
       }
       addImageDownloadLink(downloads, slideshowImages, postUrl);
@@ -1944,7 +2273,7 @@
         createElement(
           "p",
           "cliptide-status cliptide-status--error",
-          "The API returned no downloadable media for this post."
+          "This post has no downloadable media. It may be private, deleted, restricted in this region, or not a video or photo post."
         )
       );
     }

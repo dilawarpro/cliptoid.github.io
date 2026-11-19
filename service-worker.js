@@ -1,5 +1,5 @@
 /**
- * Cliptoid service worker (v60), fast + lightweight + fail-safe
+ * Cliptoid service worker (v61), fast + lightweight + self-protecting
  *
  * Strategy
  *  - Page navigations: never touched by default (CACHE_PAGES = false), so this worker can't
@@ -11,13 +11,16 @@
  *    refreshed in the background once an entry is older than MEDIA_MAX_AGE.
  *  - Never caches HTML/error pages under a JS/CSS/image URL, never caches no-store or redirects.
  *  - Cross-origin requests (Cloudflare Worker API, ads, analytics), /api/ and /cdn-cgi/ are never touched.
- *  - A slow/failed network can never abort a legitimate first download of a file.
+ *  - First downloads get a generous header timeout + ONE automatic retry (stalled connection, 5xx);
+ *    a cached copy of the same file is served if the network fails.
+ *  - Background work is throttled: max 2 revalidations at once, none on Save-Data / 2G.
+ *  - Every cache is size-capped, so long-lived installs never grow without bound.
  *
  * Deploy: bump VERSION. Only the static cache is replaced; media is kept.
  */
 "use strict";
 
-const VERSION = "v60";
+const VERSION = "v61";
 const STATIC = `cliptoid-static-${VERSION}`;   // JS / CSS / manifest (replaced on deploy)
 const MEDIA = "cliptoid-media-v1";             // images / fonts (kept across deploys)
 
@@ -27,7 +30,12 @@ const FETCH_TIMEOUT = 8000;                    // ms, limit for BACKGROUND refre
 const MEDIA_LIMIT = 120;                       // max entries in the media cache
 const PAGE_LIMIT = 20;                         // max cached pages (CACHE_PAGES = true)
 const MAX_MEDIA_BYTES = 1.5 * 1024 * 1024;     // larger images are left to the browser cache
-const SWR_MAX_AGE = 5 * 60 * 1000;             // don't revalidate unversioned files more often than this
+const STATIC_LIMIT = 80;                       // max NON-shell entries in the static cache
+const FIRST_TRY_TIMEOUT = 12000;               // ms to first byte for a first download (attempt 1)
+const RETRY_TIMEOUT = 20000;                   // ms to first byte (attempt 2, after a stall / 5xx)
+const FALLBACK_TIMEOUT = 6000;                 // ms to first byte when a cached copy can stand in
+const MAX_BG_REFRESH = 2;                      // max simultaneous background revalidations
+const SWR_MAX_AGE = 30 * 60 * 1000;            // don't revalidate unversioned files more often than this
 const MEDIA_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // refresh cached images/fonts after 7 days
 const STAMP = "x-sw-time";                     // when WE stored the entry (Date header is unreliable behind a CDN)
 
@@ -96,6 +104,12 @@ function stamp(res) {
 const ageOf = (res) => {
   const t = Number(res.headers.get(STAMP));
   return t ? Date.now() - t : Infinity;      // unknown age (older entries) = treat as stale
+};
+
+// Save-Data or a 2G link: background revalidation would compete with the user's own downloads.
+const savingData = () => {
+  const c = self.navigator?.connection;
+  return !!(c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || "")));
 };
 
 // Cache reads never throw: if storage is unavailable we simply behave like there is no cache.
@@ -191,13 +205,21 @@ self.addEventListener("activate", (event) => {
     } catch { /* not supported */ }
 
     await self.clients.claim();
-    await trim(MEDIA, MEDIA_LIMIT).catch(() => {});   // housekeeping after the important work
+    // housekeeping after the important work (never blocks activation of the new version)
+    await trim(MEDIA, MEDIA_LIMIT).catch(() => {});
+    await trim(STATIC, STATIC_LIMIT, SHELL_PATHS).catch(() => {});
   })());
 });
 
 self.addEventListener("message", (event) => {
   const type = event.data?.type || event.data;
   if (type === "SKIP_WAITING") self.skipWaiting();
+  else if (type === "TRIM") {                        // sent by the page when storage is nearly full
+    event.waitUntil(Promise.all([
+      trim(MEDIA, Math.floor(MEDIA_LIMIT / 2)),
+      trim(STATIC, Math.floor(STATIC_LIMIT / 2), SHELL_PATHS),
+    ]).catch(() => {}));
+  }
   else if (type === "GET_VERSION") event.source?.postMessage({ type: "VERSION", version: VERSION });
 });
 
@@ -211,25 +233,48 @@ const inflight = new Set();                       // avoid duplicate background 
 // so a long Cloudflare/browser max-age can't keep serving the same stale copy.
 async function refresh(request, cacheName, limit, maxBytes) {
   const key = request.url;
-  if (inflight.has(key)) return;
+  if (inflight.has(key) || inflight.size >= MAX_BG_REFRESH || savingData()) return;
   inflight.add(key);
   try {
     const res = await timedFetch(key, { cache: "no-cache", credentials: "same-origin" });
-    if (cacheable(res, false, maxBytes)) await put(cacheName, request, stamp(res), limit);
+    if (cacheable(res, false, maxBytes)) {
+      await put(cacheName, request, stamp(res), limit, cacheName === STATIC ? SHELL_PATHS : null);
+    }
   } catch { /* offline / slow: keep the copy we have */ }
   finally { inflight.delete(key); }
 }
 
-// No cached copy: get it from the network and store it. A first download is never aborted
-// by a timer (slow mobile networks); a loose cached copy is only used if the network FAILS.
+// Network with a safety net: a stalled connection or a transient 5xx (Cloudflare 52x) gets ONE
+// automatic retry on a fresh connection. The timer only covers the wait for the first byte,
+// so a slow-but-working download is never cut off.
+async function fetchResilient(request, hasFallback) {
+  const waits = hasFallback ? [FALLBACK_TIMEOUT] : [FIRST_TRY_TIMEOUT, RETRY_TIMEOUT];
+  let lastRes = null, lastErr = null;
+  for (let i = 0; i < waits.length; i++) {
+    try {
+      const res = await timedFetch(request, {}, waits[i]);
+      if (res.status < 500 || i === waits.length - 1) return res;
+      lastRes = res;
+    } catch (err) { lastErr = err; }
+    if (i < waits.length - 1) await new Promise((r) => setTimeout(r, 400));
+  }
+  if (lastRes) return lastRes;
+  throw lastErr;
+}
+
+// No cached copy: get it from the network and store it. If a loose cached copy exists
+// (same file, previous ?v=) it is used only when the network FAILS or answers 5xx.
 async function fetchAndStore(request, track, cacheName, limit, maxBytes) {
   const fallback = cacheName === STATIC ? await lookup(STATIC, request, true) : null;
   try {
-    const res = await timedFetch(request, {}, fallback ? 6000 : 0);
-    if (cacheable(res, false, maxBytes)) track(put(cacheName, request, stamp(res.clone()), limit));
+    const res = await fetchResilient(request, !!fallback);
+    if (fallback && res.status >= 500) return fallback;
+    if (cacheable(res, false, maxBytes)) {
+      track(put(cacheName, request, stamp(res.clone()), limit, cacheName === STATIC ? SHELL_PATHS : null));
+    }
     return res;
   } catch (err) {
-    if (fallback) return fallback;               // e.g. same file, previous ?v= -> better than a white screen
+    if (fallback) return fallback;               // better than a white screen
     throw err;
   }
 }
@@ -248,10 +293,10 @@ async function cacheFirst(request, track, cacheName, limit = 0) {
 async function staleWhileRevalidate(request, track) {
   const hit = await lookup(STATIC, request);
   if (hit) {
-    if (ageOf(hit) > SWR_MAX_AGE) track(refresh(request, STATIC, 0, 0));
+    if (ageOf(hit) > SWR_MAX_AGE) track(refresh(request, STATIC, STATIC_LIMIT, 0));
     return hit;
   }
-  return fetchAndStore(request, track, STATIC, 0, 0);
+  return fetchAndStore(request, track, STATIC, STATIC_LIMIT, 0);
 }
 
 // Pages (only when CACHE_PAGES = true): network first, cached copy if slow, down or 5xx.
@@ -301,7 +346,7 @@ self.addEventListener("fetch", (event) => {
       case "style":
       case "manifest":
         run = (track) => isVersioned(url)
-          ? cacheFirst(request, track, STATIC)
+          ? cacheFirst(request, track, STATIC, STATIC_LIMIT)
           : staleWhileRevalidate(request, track);
         break;
       case "image":

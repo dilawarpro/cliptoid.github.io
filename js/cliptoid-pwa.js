@@ -17,6 +17,7 @@
     apiOrigin: null,
     maxPrefetch: 8,               // max pages prefetched per visit
     maxMemCache: 100,             // max entries kept by smartFetch
+    maxReloadWaits: 15,           // update reload waits at most ~15 s for a busy request
   };
 
   const onReady = (fn) =>
@@ -299,10 +300,13 @@
     } catch {}
   });
 
-  let reloading = false, reloadQueued = false;
+  // Reload once, after a running download finishes. If something stays "busy" (a stuck
+  // request), stop waiting after maxReloadWaits so the user's Update tap always completes.
+  let reloading = false, reloadQueued = false, reloadWaits = 0;
   const reloadWhenIdle = () => {
     if (reloading) return;
-    if (document.querySelector('[aria-busy="true"], form.htmx-request')) {
+    const busy = document.querySelector('[aria-busy="true"], form.htmx-request');
+    if (busy && reloadWaits++ < CFG.maxReloadWaits) {
       if (!reloadQueued) {
         reloadQueued = true;
         setTimeout(() => { reloadQueued = false; reloadWhenIdle(); }, 1000);
@@ -341,19 +345,27 @@
             timeout: 0,
           });
 
-        if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
-        reg.addEventListener("updatefound", () => {
-          const w = reg.installing;
-          w?.addEventListener("statechange", () => {
-            if (w.state === "installed" && navigator.serviceWorker.controller) promptUpdate(w);
-          });
-        });
+        // Follow a worker until it is installed. Handles a worker that is ALREADY installing
+        // (or waiting) when register() resolves: its "updatefound" event has already fired,
+        // so listening for that event alone would miss it and the toast would never appear.
+        const watch = (w) => {
+          if (!w) return;
+          const ready = () => w.state === "installed" && navigator.serviceWorker.controller;
+          if (ready()) return promptUpdate(w);
+          w.addEventListener("statechange", () => { if (ready()) promptUpdate(w); });
+        };
+
+        watch(reg.waiting);
+        watch(reg.installing);
+        reg.addEventListener("updatefound", () => watch(reg.installing));
 
         let last = 0;
         const check = () => {
           if (!navigator.onLine || Date.now() - last < CFG.minUpdateGapMs) return;
           last = Date.now();
-          reg.update().catch(() => {});
+          reg.update()
+            .then(() => { if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting); })
+            .catch(() => {});
         };
         document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
         addEventListener("online", check);

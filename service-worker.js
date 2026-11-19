@@ -1,5 +1,5 @@
 /**
- * Cliptoid service worker (v61), fast + lightweight + self-protecting
+ * Cliptoid service worker (v62), fast + lightweight + self-protecting
  *
  * Strategy
  *  - Page navigations: never touched by default (CACHE_PAGES = false), so this worker can't
@@ -20,7 +20,7 @@
  */
 "use strict";
 
-const VERSION = "v61";
+const VERSION = "v62";
 const STATIC = `cliptoid-static-${VERSION}`;   // JS / CSS / manifest (replaced on deploy)
 const MEDIA = "cliptoid-media-v1";             // images / fonts (kept across deploys)
 
@@ -182,7 +182,11 @@ self.addEventListener("install", (event) => {
       // Media is kept across deploys, so don't download it again if already stored.
       if (isMedia && (await lookup(MEDIA, path))) return;
 
-      let res = await timedFetch(path, { cache: "reload" });
+      // The page has usually JUST downloaded these files (first visit). Reuse the browser's copy
+      // for versioned names (they never change) and only revalidate the rest (304 = a few bytes),
+      // instead of downloading everything a second time.
+      const mode = isVersioned(new URL(path, self.location.origin)) ? "default" : "no-cache";
+      let res = await timedFetch(path, { cache: mode });
       if (res.redirected) res = await clean(res);
       if (!valid(res, isPage, isMedia ? MAX_MEDIA_BYTES : 0)) throw new Error(`${path} -> ${res.status}`);
       await put(target, path, stamp(res), isMedia ? MEDIA_LIMIT : 0);

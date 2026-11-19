@@ -6,6 +6,7 @@
     swUrl: "/service-worker.js",
     updateCheckMs: 15 * 60 * 1000,
     minUpdateGapMs: 60 * 1000,
+    firstVisitDelayMs: 5000,      // first visit: delay worker registration so it never competes with the page
     errorEndpoint: null,          // e.g. "/api/client-errors" (sendBeacon)
     maxErrorReports: 5,
     installSelector: "#dwapp_image, #cliptoid-install-result",
@@ -539,8 +540,11 @@
     };
 
     // Don't compete with LCP: register after load, when idle
-    if (document.readyState === "complete") idle(start);
-    else addEventListener("load", () => idle(start), { once: true });
+    // First visit (no worker yet): wait a few seconds so the worker's install never competes with
+    // the page, the thumbnails or the user's first download request for bandwidth.
+    const kickoff = () => (hadController ? idle(start) : setTimeout(() => idle(start), CFG.firstVisitDelayMs));
+    if (document.readyState === "complete") kickoff();
+    else addEventListener("load", kickoff, { once: true });
   }
 
   window.Cliptoid = Object.freeze({ smartFetch, notify, diagnose, repair });

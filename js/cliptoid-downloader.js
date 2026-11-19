@@ -12,7 +12,7 @@
   // API (Cloudflare Worker).
   //   GET /api/info?url=<tiktok link>[&fresh=1]  -> { ok, data: { title, cover, author, video, hd, music, images, tokens, ... } }
   //   GET /api/download?token=<signed token>&filename=<name>   (fast path, no lookup)
-  //   GET /api/download?url=<link>&type=video|hd|music&filename=<name>   (fallback path)
+  //   GET /api/download?url=<link>&type=video|hd|music|image|zip&filename=<name>   (fallback path)
   const API_BASE = "https://tiktok-dl-api.dilawargithub.workers.dev";
   const apiUrl = `${API_BASE}/api/info`;
   const downloadApiUrl = `${API_BASE}/api/download`;
@@ -48,8 +48,7 @@
   // ---------------------------------------------------------------------------
   // Performance tuning constants
   // ---------------------------------------------------------------------------
-  const MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024; // hard cap for in-browser blob downloads (images, slideshow)
-  const DOWNLOAD_TIMEOUT_MS = 120000;
+  const MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024; // hard cap for in-browser slideshow video building
   const API_HEDGE_MS = 2500; // start a parallel backup request if no answer by then
   const API_DEADLINE_MS = 15000; // give up on the whole lookup after this
   const INFO_STORAGE_KEY = "cliptoid.infoCache.v4"; // v4: adds signed download tokens
@@ -57,6 +56,13 @@
   const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // CDN links expire, keep cache short
   const INFO_CACHE_MAX = 50;
   const infoCache = new Map(); // normalized post URL -> { data, time }
+
+  // true  = the browser starts the download itself, instantly. The user can leave the page.
+  //         (The page cannot read a native download's progress, so the fill is an estimate
+  //          until the download is handed to the browser. The label says "Starting…", not "Downloading…".)
+  // false = the file is fetched inside the page: real percentage, but the user must stay.
+  const NATIVE_DOWNLOADS = true;
+  const NATIVE_GRACE_MS = 2000; // how long we wait for an error before showing the checkmark
 
   let isLoading = false;
   let currentResult = { title: "", cover: "", tokens: null };
@@ -850,7 +856,7 @@
   }
   input.focus({ preventScroll: true });
 
-  // Media URLs that the browser fetches directly (slideshow images / images) must be
+  // Media URLs that the browser fetches directly (slideshow images) must be
   // https and come from TikTok's CDN or from the API Worker itself.
   const safeMediaUrl = (value) => {
     if (typeof value !== "string") return null;
@@ -892,26 +898,6 @@
   // File name without extension, for the Worker's /api/download?filename=... parameter.
   const getDownloadBaseName = () => getDownloadFilename("", "bin").replace(/\.bin$/, "");
 
-  const getMediaExtension = (url, fallback = "jpg") => {
-    try {
-      const extension = new URL(url).pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase();
-      return ({ jpeg: "jpg" })[extension] || (extension && ["jpg", "png", "webp", "avif"].includes(extension) ? extension : fallback);
-    } catch {
-      return fallback;
-    }
-  };
-
-  const imageExtensions = ["jpg", "png", "webp", "avif"];
-  const mimeByExtension = {
-    mp3: "audio/mpeg",
-    mp4: "video/mp4",
-    webm: "video/webm",
-    jpg: "image/jpeg",
-    png: "image/png",
-    webp: "image/webp",
-    avif: "image/avif",
-  };
-
   // Saves a Blob to disk through a temporary anchor element.
   const saveBlob = (blob, filename) => {
     const blobUrl = URL.createObjectURL(blob);
@@ -926,168 +912,8 @@
     window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   };
 
-  // Streams a media file into memory with progress, size limits, timeout and cancellation.
-  // Used for single image saves.
-  const downloadBlob = async (
-    url,
-    {
-      signal,
-      onProgress,
-      validateType,
-      fallbackType = "application/octet-stream",
-      maxBytes = MAX_DOWNLOAD_BYTES,
-      timeoutMs = DOWNLOAD_TIMEOUT_MS,
-    } = {}
-  ) => {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    let timedOut = false;
-    if (signal) {
-      if (signal.aborted) abort();
-      else signal.addEventListener("abort", abort, { once: true });
-    }
-    const timer = window.setTimeout(() => {
-      timedOut = true;
-      abort();
-    }, timeoutMs);
-
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        mode: "cors",
-        credentials: "omit",
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Media server returned HTTP ${response.status}. Try again shortly.`);
-      }
-      if (!response.body) throw new Error("This browser cannot stream the media download.");
-      const type = response.headers.get("content-type")?.split(";")[0] || fallbackType;
-      validateType?.(type);
-
-      const declaredLength = Number(response.headers.get("content-length"));
-      if (declaredLength > maxBytes) {
-        throw new Error("This file is too large to download safely in your browser.");
-      }
-
-      const reader = response.body.getReader();
-      const chunks = [];
-      let receivedLength = 0;
-      let lastProgress = -1;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        receivedLength += value.byteLength;
-        if (receivedLength > maxBytes) {
-          await reader.cancel();
-          throw new Error("This file is too large to download safely in your browser.");
-        }
-        chunks.push(value);
-        if (declaredLength > 0 && onProgress) {
-          const progress = Math.min(99, Math.round((receivedLength / declaredLength) * 100));
-          if (progress !== lastProgress) {
-            lastProgress = progress;
-            onProgress(progress);
-          }
-        }
-      }
-      if (!receivedLength) throw new Error("The media server returned an empty file.");
-      return { blob: new Blob(chunks, { type }), type };
-    } catch (error) {
-      if (timedOut) throw new Error("The download timed out. Please try again.");
-      throw error;
-    } finally {
-      window.clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-    }
-  };
-
-  // Blob-based download button, used for slideshow image saves ("Save image N").
-  const addDownloadLink = (parent, url, label, filename, variant = "") => {
-    const safeUrl = safeMediaUrl(url);
-    if (!safeUrl) return false;
-    const sourcePostUrl = input.value.trim();
-    const resultInfo = { ...currentResult };
-    const button = createElement(
-      "button",
-      `cliptide-button cliptide-download${variant ? ` cliptide-download--${variant}` : ""}`,
-      label
-    );
-    button.type = "button";
-    const extension = filename.split(".").pop().toLowerCase();
-    const isAudio = extension === "mp3";
-    const isImage = imageExtensions.includes(extension);
-    const mediaType = isAudio ? "audio" : isImage ? "image" : "video";
-    const fallbackType = mimeByExtension[extension] || "application/octet-stream";
-    addButtonIcon(
-      button,
-      isAudio ? "audio" : isImage || variant === "hd" ? "download" : "video",
-      isImage ? "" : isAudio ? "MP3" : variant === "hd" ? "HD" : "MP4"
-    );
-
-    const validateType = (contentType) => {
-      if (mediaType === "video" && contentType.startsWith("audio/")) {
-        throw new Error("The media service returned audio instead of a video. No mislabeled file was saved.");
-      }
-      if (isAudio && /^(video|image)\//i.test(contentType)) {
-        throw new Error("The media service returned non-audio content instead of a sound file.");
-      }
-    };
-
-    button.addEventListener("click", async () => {
-      if (button.disabled) return;
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
-      const status =
-        parent.nextElementSibling?.classList.contains("cliptide-download-status")
-          ? parent.nextElementSibling
-          : createElement("p", "cliptide-download-status");
-      status.setAttribute("role", "status");
-      status.setAttribute("aria-live", "polite");
-      status.textContent = `Starting ${mediaType} download…`;
-      if (!status.isConnected) parent.after(status);
-      setButtonLabel(button, `Starting ${mediaType}…`);
-
-      const showProgress = (progress) => {
-        status.textContent = `Downloading ${mediaType}… ${progress}%`;
-        setButtonLabel(button, `Downloading… ${progress}%`);
-      };
-
-      try {
-        const result = await downloadBlob(safeUrl, {
-          onProgress: showProgress,
-          validateType,
-          fallbackType,
-        });
-        saveBlob(result.blob, filename);
-        saveDownloadHistory(resultInfo, sourcePostUrl);
-        status.textContent = "Your download has started.";
-        setButtonLabel(button, "Download started");
-        window.setTimeout(() => {
-          setButtonLabel(button, label);
-          button.disabled = false;
-          button.removeAttribute("aria-busy");
-        }, 1800);
-        return;
-      } catch (error) {
-        status.textContent =
-          error.name === "AbortError"
-            ? "Download cancelled."
-            : error instanceof TypeError
-            ? "Could not fetch this file directly. The media server may temporarily block downloads; please retry."
-            : error.message || "Could not start the download. Please try again.";
-      }
-      setButtonLabel(button, label);
-      button.disabled = false;
-      button.removeAttribute("aria-busy");
-    });
-    parent.append(button);
-    return true;
-  };
-
   // ---------------------------------------------------------------------------
-  // Download helpers: signed fast links, in-page progress downloads, image fallbacks
+  // Download helpers: signed fast links, native + in-page downloads, image fallbacks
   // ---------------------------------------------------------------------------
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -1140,17 +966,6 @@
     });
   };
 
-  // Fallback for very large files: let the browser handle the download itself.
-  const startNativeDownload = (href) => {
-    const link = createElement("a");
-    link.href = href;
-    link.rel = "noopener";
-    link.style.display = "none";
-    document.body.append(link);
-    link.click();
-    link.remove();
-  };
-
   // Fresh lookup (new signed links) when a download link has expired.
   const refreshInfo = async (postUrl) => {
     const requestUrl = new URL(apiUrl);
@@ -1171,7 +986,8 @@
 
   const BLOB_LIMIT = 120 * 1024 * 1024;
 
-  // Downloads the file inside the page with progress. Shows the Worker's real error message.
+  // Downloads the file inside the page with progress (only used when NATIVE_DOWNLOADS is false).
+  // Shows the Worker's real error message.
   const fetchMediaBlob = async (href, onProgress) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 180000);
@@ -1209,7 +1025,241 @@
     }
   };
 
-  // Video / HD / MP3 button: starts immediately, shows progress in the page, never navigates.
+  /* ---------------------------------------------------------------------
+     Progress button: fill animation, percentage, animated checkmark
+     --------------------------------------------------------------------- */
+
+  const injectProgressStyles = () => {
+    if (document.getElementById("cliptoid-progress-styles")) return;
+    const style = createElement("style");
+    style.id = "cliptoid-progress-styles";
+    // Tweak the fill colour with:  .cliptide-download { --cliptoid-fill: rgba(255,255,255,.28); }
+    style.textContent = `
+  .cliptide-download{position:relative;isolation:isolate}
+  .cliptide-download>.cliptoid-fill{position:absolute;top:0;bottom:0;left:0;width:0;z-index:-1;border-radius:inherit;background:var(--cliptoid-fill,rgba(255,255,255,.28));transition:width .22s linear;pointer-events:none}
+  .cliptide-download.is-progress{cursor:progress}
+  .cliptide-download .cliptoid-button__label{font-variant-numeric:tabular-nums}
+  .cliptide-download.is-done{animation:cliptoid-pop .38s ease-out}
+  .cliptide-download.is-done>.cliptoid-fill{transition:width .2s ease-out}
+  .cliptoid-icon.cliptoid-check{fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+  .cliptoid-check path{stroke-dasharray:22;stroke-dashoffset:22;animation:cliptoid-check-draw .42s cubic-bezier(.65,0,.35,1) .08s forwards}
+  @keyframes cliptoid-check-draw{to{stroke-dashoffset:0}}
+  @keyframes cliptoid-pop{40%{transform:scale(1.03)}}
+  @media (prefers-reduced-motion:reduce){
+    .cliptide-download>.cliptoid-fill{transition:none}
+    .cliptide-download.is-done{animation:none}
+    .cliptoid-check path{animation:none;stroke-dashoffset:0}
+  }`;
+    document.head.append(style);
+  };
+  injectProgressStyles();
+
+  const createCheckIcon = () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    svg.classList.add("cliptoid-icon", "cliptoid-check");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "m5 12.5 4.5 4.5L19 7.5");
+    svg.append(path);
+    return svg;
+  };
+
+  // Call AFTER addButtonIcon(button, ...). Returns the controller for that button.
+  const createProgressButton = (button, idleLabel) => {
+    const fill = createElement("span", "cliptoid-fill");
+    fill.setAttribute("aria-hidden", "true");
+    const idleIcon = button.firstElementChild; // the icon addButtonIcon() put there
+    button.prepend(fill);
+    let shown = 0;
+    let resetTimer = 0;
+
+    const setFill = (value) => {
+      fill.style.width = `${value}%`;
+    };
+    const restore = () => {
+      window.clearTimeout(resetTimer);
+      button.classList.remove("is-progress", "is-done");
+      button.removeAttribute("aria-busy");
+      const check = button.querySelector(":scope > .cliptoid-check");
+      if (check && idleIcon) check.replaceWith(idleIcon);
+      fill.style.transition = "none"; // snap back instead of animating backwards
+      setFill(0);
+      void fill.offsetWidth;
+      fill.style.transition = "";
+      shown = 0;
+      setButtonLabel(button, idleLabel);
+    };
+
+    const api = {
+      get busy() {
+        return button.classList.contains("is-progress") || button.classList.contains("is-done");
+      },
+      start() {
+        restore();
+        button.classList.add("is-progress");
+        button.setAttribute("aria-busy", "true");
+        api.set(0, "Starting…");
+      },
+      // 0–99 only; 100 is reserved for done(). Never moves backwards.
+      set(percent, verb = "Downloading…") {
+        const p = Math.max(shown, Math.min(99, Math.round(percent)));
+        shown = p;
+        setFill(p);
+        setButtonLabel(button, `${verb} ${p}%`);
+      },
+      done(text = "Download started") {
+        window.clearTimeout(resetTimer);
+        button.classList.remove("is-progress");
+        button.classList.add("is-done");
+        button.removeAttribute("aria-busy");
+        setFill(100);
+        if (idleIcon && idleIcon.parentNode === button) idleIcon.replaceWith(createCheckIcon());
+        setButtonLabel(button, text);
+        resetTimer = window.setTimeout(restore, 2600);
+      },
+      fail() {
+        restore();
+      },
+    };
+    return api;
+  };
+
+  // Smooth eased fill while the browser takes over the download (see NATIVE_DOWNLOADS).
+  const startSimulatedProgress = (progress, durationMs) => {
+    const started = performance.now();
+    const timer = window.setInterval(() => {
+      const x = Math.min(1, (performance.now() - started) / durationMs);
+      progress.set(94 * (1 - Math.pow(1 - x, 2.4)), "Starting…");
+    }, 80);
+    return () => window.clearInterval(timer);
+  };
+
+
+  /* ---------------------------------------------------------------------
+     Native download: the browser's own download manager does the work
+     --------------------------------------------------------------------- */
+
+  // Points a hidden iframe at the Worker's /api/download URL. The Worker answers with
+  // "Content-Disposition: attachment", so the browser starts a normal download immediately
+  // and keeps going even if the page is closed. If the Worker has to fail, `frame=1` makes it
+  // post the error back to this page instead of showing raw JSON.
+  const startNativeDownload = (href, onError) => {
+    const url = new URL(href);
+    url.searchParams.set("frame", "1");
+    const frame = createElement("iframe");
+    frame.setAttribute("aria-hidden", "true");
+    frame.tabIndex = -1;
+    frame.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none";
+
+    const onMessage = (event) => {
+      if (event.source !== frame.contentWindow || event.data?.type !== "cliptoid-download-error") return;
+      window.removeEventListener("message", onMessage);
+      const data = event.data;
+      onError?.(
+        Object.assign(new Error(data.error || "The download could not be started."), {
+          code: data.code,
+          retryable: data.retryable !== false,
+          expired: data.code === "LINK_EXPIRED",
+        })
+      );
+    };
+    window.addEventListener("message", onMessage);
+    window.setTimeout(() => window.removeEventListener("message", onMessage), 45000);
+    window.setTimeout(() => frame.remove(), 10 * 60 * 1000);
+    document.body.append(frame);
+    frame.src = url.href;
+  };
+
+  // Resolves after `graceMs` without an error (download handed to the browser).
+  // Rejects if the Worker reports an error first. A later error goes to onLateError.
+  const nativeHandoff = (href, progress, { graceMs = NATIVE_GRACE_MS, onLateError } = {}) =>
+    new Promise((resolve, reject) => {
+      let settled = false;
+      const stopProgress = startSimulatedProgress(progress, graceMs * 0.95);
+      startNativeDownload(href, (error) => {
+        stopProgress();
+        if (settled) {
+          onLateError?.(error);
+        } else {
+          settled = true;
+          reject(error);
+        }
+      });
+      window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        stopProgress();
+        resolve();
+      }, graceMs);
+    });
+
+  // Fallback mode (NATIVE_DOWNLOADS = false): fetch inside the page with REAL progress.
+  const inPageDownload = async (href, filename, progress) => {
+    const blob = await fetchMediaBlob(href, (received, total) => {
+      const percent = total ? (received / total) * 100 : 90 * (1 - Math.exp(-received / 6e6));
+      progress.set(percent, "Downloading…");
+    });
+    saveBlob(blob, filename);
+  };
+
+  // One download from click to checkmark. `buildHref(tokens)` returns the Worker URL.
+  // If the link has expired (or TikTok hiccuped) it fetches fresh links once and retries.
+  const runDownload = async ({ progress, status, resultInfo, postUrl, buildHref, filename, graceMs }) => {
+    progress.start();
+    status.textContent = "Starting your download…";
+    const lateError = (error) => {
+      status.textContent = error.message || "The download could not be started. Please try again.";
+      progress.fail();
+    };
+    const attemptOnce = async (href) => {
+      if (NATIVE_DOWNLOADS) return nativeHandoff(href, progress, { graceMs, onLateError: lateError });
+      try {
+        await inPageDownload(href, filename, progress);
+      } catch (error) {
+        if (!error.tooLarge) throw error; // very large file: let the browser do it
+        await nativeHandoff(href, progress, { graceMs, onLateError: lateError });
+      }
+    };
+
+    for (let attempt = 0; ; attempt += 1) {
+      const href = buildHref(resultInfo.tokens);
+      try {
+        await attemptOnce(href);
+        saveDownloadHistory(resultInfo, postUrl);
+        status.textContent = NATIVE_DOWNLOADS
+          ? "Your download has started. You can keep browsing."
+          : "Your download is complete.";
+        progress.done(NATIVE_DOWNLOADS ? "Download started" : "Downloaded");
+        return;
+      } catch (error) {
+        const retryable = error.expired || error.retryable || error instanceof TypeError;
+        if (attempt === 0 && retryable) {
+          status.textContent = "Refreshing the download link…";
+          try {
+            const fresh = await refreshInfo(postUrl);
+            resultInfo.tokens = fresh.tokens || null;
+            continue;
+          } catch {
+            /* fall through to the error message */
+          }
+        }
+        status.textContent =
+          error instanceof TypeError
+            ? "Could not reach the download service. Check your connection and try again."
+            : error.message || "Could not start the download. Please try again.";
+        progress.fail();
+        return;
+      }
+    }
+  };
+
+
+  /* ---------------------------------------------------------------------
+     Buttons: Video / HD / MP3
+     --------------------------------------------------------------------- */
+
   const addApiDownloadLink = (parent, type, label, postUrl, variant = "") => {
     const isAudio = type === "music";
     const ext = isAudio ? "mp3" : "mp4";
@@ -1224,127 +1274,97 @@
       isAudio ? "audio" : variant === "hd" ? "download" : "video",
       isAudio ? "MP3" : variant === "hd" ? "HD" : "MP4"
     );
+    const progress = createProgressButton(button, label);
     const resultInfo = { ...currentResult };
 
-    button.addEventListener("click", async () => {
-      if (button.disabled) return;
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
-      const status = dlStatusFor(parent);
+    button.addEventListener("click", () => {
+      if (progress.busy) return;
       const base = getDownloadBaseName();
-      const finish = () => {
-        setButtonLabel(button, label);
-        button.disabled = false;
-        button.removeAttribute("aria-busy");
-      };
-      let lastShown = "";
-      const showProgress = (received, total) => {
-        const text = total ? `${Math.min(99, Math.round((received / total) * 100))}%` : `${(received / 1048576).toFixed(1)} MB`;
-        if (text === lastShown) return;
-        lastShown = text;
-        status.textContent = `Downloading… ${text}`;
-        setButtonLabel(button, `Downloading… ${text}`);
-      };
-      status.textContent = "Starting your download…";
-      setButtonLabel(button, "Starting…");
-
-      let lastError = null;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const href = buildDownloadUrl(postUrl, type, base, resultInfo.tokens);
-        try {
-          const blob = await fetchMediaBlob(href, showProgress);
-          saveBlob(blob, `${base}.${ext}`);
-          saveDownloadHistory(resultInfo, postUrl);
-          status.textContent = "Your download has started.";
-          setButtonLabel(button, "Download started");
-          window.setTimeout(finish, 1800);
-          return;
-        } catch (error) {
-          if (error.tooLarge) {
-            startNativeDownload(href);
-            saveDownloadHistory(resultInfo, postUrl);
-            status.textContent = "Your download has started.";
-            setButtonLabel(button, "Download started");
-            window.setTimeout(finish, 1800);
-            return;
-          }
-          lastError = error;
-          if (attempt === 0 && (error.expired || error.retryable || error instanceof TypeError)) {
-            status.textContent = "Refreshing the download link…";
-            try {
-              const fresh = await refreshInfo(postUrl);
-              resultInfo.tokens = fresh.tokens || null;
-              continue;
-            } catch {}
-          }
-          break;
-        }
-      }
-      status.textContent =
-        lastError instanceof TypeError
-          ? "Could not reach the download service. Check your connection and try again."
-          : lastError?.message || "Could not start the download. Please try again.";
-      finish();
+      runDownload({
+        progress,
+        status: dlStatusFor(parent),
+        resultInfo,
+        postUrl,
+        filename: `${base}.${ext}`,
+        buildHref: (tokens) => buildDownloadUrl(postUrl, type, base, tokens),
+      });
     });
     parent.append(button);
     return true;
   };
 
-  // "Download as Image(s)": one image for single-image posts; for slideshows every slide is
-  // saved as its own file, one after another (no ZIP).
+
+  /* ---------------------------------------------------------------------
+     Photos: all photos as one ZIP (or the single photo), and one-by-one saves
+     These use the Worker's /api/download?type=zip and ?type=image&index=N.
+     --------------------------------------------------------------------- */
+
   const addImageDownloadLink = (parent, imageUrls, postUrl) => {
     const many = imageUrls.length > 1;
-    const label = many ? `Download as Images (${imageUrls.length})` : "Download as Image";
+    const label = many ? `Download Photos (${imageUrls.length}, ZIP)` : "Download Photo";
     const button = createElement("button", "cliptide-button cliptide-download", label);
     button.type = "button";
     addButtonIcon(button, "download");
+    const progress = createProgressButton(button, label);
     const resultInfo = { ...currentResult };
-    const extensionFor = (type) =>
-      /png/i.test(type) ? "png" : /webp/i.test(type) ? "webp" : /avif/i.test(type) ? "avif" : /gif/i.test(type) ? "gif" : "jpg";
 
-    button.addEventListener("click", async () => {
-      if (button.disabled) return;
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
-      const status = dlStatusFor(parent);
-      let saved = 0;
-      for (let i = 0; i < imageUrls.length; i += 1) {
-        status.textContent = `Saving image ${i + 1} of ${imageUrls.length}…`;
-        setButtonLabel(button, `Saving ${i + 1}/${imageUrls.length}…`);
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          try {
-            const result = await downloadBlob(imageUrls[i], {
-              fallbackType: "image/jpeg",
-              validateType: (type) => {
-                if (!/^image\//i.test(type)) throw new Error("The server did not return an image.");
-              },
-            });
-            saveBlob(result.blob, getDownloadFilename("", extensionFor(result.type)));
-            saved += 1;
-            break;
-          } catch {
-            if (attempt === 0) await sleep(800);
-          }
-        }
-        if (i < imageUrls.length - 1) await sleep(350); // small gap so browsers accept every file
-      }
-      if (saved) saveDownloadHistory(resultInfo, postUrl);
-      status.textContent = !saved
-        ? "Could not save the images. Please try again."
-        : saved < imageUrls.length
-        ? `Saved ${saved} of ${imageUrls.length} images. Use "Save image N" below for the rest.`
-        : many
-        ? `Saved all ${saved} images. If your browser asked to allow multiple downloads, choose Allow.`
-        : "Your download has started.";
-      setButtonLabel(button, label);
-      button.disabled = false;
-      button.removeAttribute("aria-busy");
+    button.addEventListener("click", () => {
+      if (progress.busy) return;
+      const base = getDownloadBaseName();
+      runDownload({
+        progress,
+        status: dlStatusFor(parent),
+        resultInfo,
+        postUrl,
+        filename: `${base}.${many ? "zip" : "jpg"}`,
+        // The Worker collects every slide before it answers, so give a ZIP a little longer.
+        graceMs: many ? Math.min(7000, 1500 + 300 * imageUrls.length) : NATIVE_GRACE_MS,
+        buildHref: () => buildDownloadUrl(postUrl, many ? "zip" : "image", base, null),
+      });
     });
     parent.append(button);
     return true;
   };
 
-  // "Download as Video (with sound)": builds the slideshow video in the browser.
+  // "Save image N" under each gallery thumbnail.
+  const addImageSaveButton = (item, index, postUrl) => {
+    const label = `Save image ${index + 1}`;
+    const button = createElement("button", "cliptide-button cliptide-download", label);
+    button.type = "button";
+    addButtonIcon(button, "download");
+    const progress = createProgressButton(button, label);
+    const resultInfo = { ...currentResult };
+    const status = createElement("p", "cliptide-download-status");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+
+    button.addEventListener("click", () => {
+      if (progress.busy) return;
+      if (!status.isConnected) item.append(status);
+      const base = getDownloadBaseName();
+      runDownload({
+        progress,
+        status,
+        resultInfo,
+        postUrl,
+        filename: `${base}.jpg`,
+        buildHref: () => {
+          const link = new URL(buildDownloadUrl(postUrl, "image", base, null));
+          link.searchParams.set("index", String(index));
+          return link.href;
+        },
+      });
+    });
+    item.append(button);
+  };
+
+
+  /* ---------------------------------------------------------------------
+     Slideshow video (built in the browser). Same logic as before; the button now
+     shows real progress: loading images 0–30 %, recording 30–98 %, then the checkmark.
+     Note: the browser records the slideshow in real time, so a 30 s sound takes ~30 s.
+     --------------------------------------------------------------------- */
+
   const addSlideshowVideoLink = (parent, imageUrls, audioUrl, title, postDurationSeconds = 0) => {
     if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return false;
     const VIDEO_LABEL = "Download as Video (with sound)";
@@ -1360,14 +1380,14 @@
     const button = createElement("button", "cliptide-button cliptide-download cliptide-download--primary", VIDEO_LABEL);
     button.type = "button";
     addButtonIcon(button, "video");
+    const progress = createProgressButton(button, VIDEO_LABEL);
+
     button.addEventListener("click", async () => {
-      if (button.disabled) return;
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
+      if (progress.busy) return;
+      progress.start();
       const filename = getDownloadFilename(title, extension);
       const status = dlStatusFor(parent);
       status.textContent = "Starting slideshow video…";
-      setButtonLabel(button, "Starting video…");
 
       let audioContext = null;
       let audioSource = null;
@@ -1416,7 +1436,6 @@
 
         let receivedImageBytes = 0;
         let loadedImages = 0;
-        const maxSlideshowBytes = MAX_DOWNLOAD_BYTES;
         const loadSlide = async (imageUrl) => {
           let response = null;
           for (let attempt = 0; attempt < 2 && !(response && response.ok); attempt += 1) {
@@ -1430,13 +1449,13 @@
           if (!response || !response.ok) throw new Error("A slideshow image could not be loaded.");
           const imageBlob = await response.blob();
           receivedImageBytes += imageBlob.size;
-          if (receivedImageBytes > maxSlideshowBytes) {
+          if (receivedImageBytes > MAX_DOWNLOAD_BYTES) {
             throw new Error("These slideshow images are too large to combine safely in your browser.");
           }
           const bitmap = await createImageBitmap(imageBlob);
           loadedImages += 1;
           status.textContent = `Loading slideshow images… ${loadedImages}/${imageUrls.length}`;
-          setButtonLabel(button, `Loading… ${loadedImages}/${imageUrls.length}`);
+          progress.set((loadedImages / imageUrls.length) * 30, "Loading…");
           return bitmap;
         };
         const loadSlides = async () => {
@@ -1465,8 +1484,7 @@
         recorder = new MediaRecorder(stream, { mimeType });
         const recordingFinished = new Promise((resolve, reject) => {
           recorder.addEventListener("dataavailable", (event) => {
-            if (!event.data.size) return;
-            chunks.push(event.data);
+            if (event.data.size) chunks.push(event.data);
           });
           recorder.addEventListener("error", () => reject(new Error("The browser could not encode this slideshow.")), { once: true });
           recorder.addEventListener("stop", resolve, { once: true });
@@ -1482,11 +1500,20 @@
         drawSlide(slideBitmaps[0]);
         recorder.start(500);
         audioSource?.start();
-        for (let index = 0; index < slideBitmaps.length; index += 1) {
-          if (index > 0) drawSlide(slideBitmaps[index]);
-          status.textContent = `Rendering slideshow video… ${index + 1}/${imageUrls.length}`;
-          setButtonLabel(button, `Rendering… ${index + 1}/${imageUrls.length}`);
-          await new Promise((resolve) => window.setTimeout(resolve, slideDurationMs));
+
+        const recordingStarted = performance.now();
+        const ticker = window.setInterval(() => {
+          const x = Math.min(1, (performance.now() - recordingStarted) / (totalDurationSeconds * 1000));
+          progress.set(30 + 68 * x, "Creating video…");
+        }, 120);
+        try {
+          for (let index = 0; index < slideBitmaps.length; index += 1) {
+            if (index > 0) drawSlide(slideBitmaps[index]);
+            status.textContent = `Creating slideshow video… slide ${index + 1} of ${imageUrls.length}`;
+            await new Promise((resolve) => window.setTimeout(resolve, slideDurationMs));
+          }
+        } finally {
+          window.clearInterval(ticker);
         }
         recorder.stop();
         await recordingFinished;
@@ -1497,27 +1524,21 @@
           `Your slideshow video download has started.` +
           (extension === "webm" ? " This browser generated WebM instead of MP4." : "") +
           (audioFailed && audioUrl ? " The sound could not be loaded, so this video has no audio." : "");
-        setButtonLabel(button, "Download started");
+        progress.done("Download started");
       } catch (error) {
         if (recorder?.state === "recording") recorder.stop();
         status.textContent = error.name === "AbortError" ? "Download cancelled." : error.message || "Could not create the slideshow video.";
-        setButtonLabel(button, VIDEO_LABEL);
-        button.disabled = false;
-        button.removeAttribute("aria-busy");
+        progress.fail();
       } finally {
         slideBitmaps.forEach((bitmap) => bitmap.close?.());
         stream?.getTracks().forEach((track) => track.stop());
         if (audioContext) await audioContext.close().catch(() => {});
       }
-      window.setTimeout(() => {
-        setButtonLabel(button, VIDEO_LABEL);
-        button.disabled = false;
-        button.removeAttribute("aria-busy");
-      }, 1800);
     });
     parent.append(button);
     return true;
   };
+
 
   const copyText = async (text) => {
     if (navigator.clipboard && window.isSecureContext) {
@@ -1842,10 +1863,10 @@
     if (soundOnly) {
       addApiDownloadLink(downloads, "music", "Download Sound MP3", postUrl);
     } else if (slideshowImages.length) {
-      // Slideshow / image post: video with sound, image(s), MP3 sound.
+      // Slideshow / image post: video with sound, photo(s), MP3 sound.
       const slideshowAudio = info.hasAudio ? buildDownloadUrl(postUrl, "music", getDownloadBaseName(), info.tokens) : null;
       if (!addSlideshowVideoLink(downloads, slideshowImages, slideshowAudio, title || "TikTok-slideshow", info.duration)) {
-        downloads.append(createElement("p", "cliptide-status cliptide-status--info", "Video creation is not supported by this browser. You can still download the images and the audio."));
+        downloads.append(createElement("p", "cliptide-status cliptide-status--info", "Video creation is not supported by this browser. You can still download the photos and the audio."));
       }
       addImageDownloadLink(downloads, slideshowImages, postUrl);
     } else {
@@ -1909,12 +1930,7 @@
         image.decoding = "async";
         attachImageFallback(image, () => image.remove());
         item.append(image);
-        addDownloadLink(
-          item,
-          safeUrl,
-          `Save image ${index + 1}`,
-          getDownloadFilename(`${title || "TikTok-slideshow"}-slide-${index + 1}`, getMediaExtension(safeUrl))
-        );
+        addImageSaveButton(item, index, postUrl);
         grid.append(item);
       });
       if (grid.childElementCount) {

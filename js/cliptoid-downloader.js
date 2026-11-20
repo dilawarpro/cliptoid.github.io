@@ -1028,13 +1028,34 @@
 
   const BLOB_LIMIT = 120 * 1024 * 1024;
 
-  // Parallel byte-range download. TikTok's CDN (and the Worker in between) usually serves one
-  // connection slower than several side by side, so the file is cut into DL_CHUNK pieces that
-  // are fetched DL_CONCURRENCY at a time. If the server ignores Range, it simply streams the
-  // whole file through one connection, exactly as before.
-  const DL_CHUNK = 2 * 1024 * 1024;
-  const DL_CONCURRENCY = 4;
+  // ---------------------------------------------------------------------------
+  // Adaptive parallel byte-range download ("peak speed" logic)
+  //
+  // TikTok's CDN (and the Worker in between) usually serves several connections side by side
+  // faster than one. The file is cut into pieces that are fetched in parallel:
+  //   - The first piece (DL_CHUNK, 2 MB) is requested alone. Its Content-Range reveals the
+  //     file size, and its bytes keep streaming while the remaining pieces are planned.
+  //   - Piece size adapts to the file: the rest is split evenly across the starting
+  //     connections (never below DL_CHUNK_MIN), with a ceiling that grows with file size
+  //     (2 MB up to 20 MB, 4 MB up to 60 MB, 8 MB above) so big HD files make fewer requests.
+  //   - Connections start at DL_MIN_LANES and ramp up, one more per DL_RAMP_MS, up to
+  //     DL_MAX_LANES, for as long as measured throughput keeps rising by at least
+  //     DL_RAMP_GAIN. When an extra connection stops helping, the ramp stops. If a piece has
+  //     to be retried (throttling / flaky connection), the ramp stops and one connection is
+  //     given back, so the download never fights the CDN.
+  //   - Every piece and the total size are verified, so the saved file is byte-identical.
+  // If the server ignores Range, the file simply streams through one connection.
+  // ---------------------------------------------------------------------------
+  const DL_CHUNK = 2 * 1024 * 1024; // first piece (also discovers the file size)
+  const DL_CHUNK_MIN = 1024 * 1024; // smallest piece after the first
+  const DL_MIN_LANES = 4; // connections used from the start
+  const DL_MAX_LANES = 8; // never more than this many at once
+  const DL_RAMP_MS = 1000; // how often the speed is checked to add a connection
+  const DL_RAMP_GAIN = 1.1; // an added connection must lift speed by 10 % to keep ramping
   const DL_SEGMENT_ATTEMPTS = 3;
+
+  const chunkCeilingFor = (total) =>
+    total > 60 * 1024 * 1024 ? 8 * 1024 * 1024 : total > 20 * 1024 * 1024 ? 4 * 1024 * 1024 : 2 * 1024 * 1024;
 
   const tooLargeError = () => Object.assign(new Error("large"), { tooLarge: true });
 
@@ -1078,6 +1099,7 @@
   const fetchMediaBlob = async (href, onProgress) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 300000);
+    let rampTimer = 0;
     const request = (headers) =>
       fetch(href, { mode: "cors", credentials: "omit", cache: "no-store", signal: controller.signal, headers });
 
@@ -1121,15 +1143,20 @@
         throw tooLargeError();
       }
 
+      // Plan the remaining pieces: split evenly across the starting connections, but keep every
+      // piece between DL_CHUNK_MIN and the ceiling for this file size.
       const firstEnd = Number(range[2]);
+      const remaining = total - (firstEnd + 1);
+      const chunk = Math.max(DL_CHUNK_MIN, Math.min(chunkCeilingFor(total), Math.ceil(remaining / DL_MIN_LANES)));
       const ranges = [];
-      for (let start = firstEnd + 1; start < total; start += DL_CHUNK) {
-        ranges.push([start, Math.min(total - 1, start + DL_CHUNK - 1)]);
+      for (let start = firstEnd + 1; start < total; start += chunk) {
+        ranges.push([start, Math.min(total - 1, start + chunk - 1)]);
       }
 
       const results = new Array(ranges.length + 1);
       const received = new Array(ranges.length + 1).fill(0);
-      const report = () => onProgress(received.reduce((sum, n) => sum + n, 0), total);
+      const receivedTotal = () => received.reduce((sum, n) => sum + n, 0);
+      const report = () => onProgress(receivedTotal(), total);
 
       const firstDone = readAllBytes(first, (n) => {
         received[0] += n;
@@ -1140,6 +1167,13 @@
         }
         results[0] = parts;
       });
+
+      // Connection management (see the overview above).
+      let next = 0; // next piece to hand out
+      let laneTarget = Math.min(DL_MIN_LANES, ranges.length); // connections we want right now
+      let spawned = 0; // connections started so far
+      let rampDone = ranges.length <= DL_MIN_LANES; // true = stop adding connections
+      const laneRuns = [firstDone];
 
       const fetchSegment = async (slot, [start, end]) => {
         for (let attempt = 0; ; attempt += 1) {
@@ -1163,23 +1197,74 @@
             return parts;
           } catch (error) {
             if (controller.signal.aborted || error.expired || attempt >= DL_SEGMENT_ATTEMPTS - 1) throw error;
+            // The CDN is struggling: stop ramping up and give one connection back.
+            rampDone = true;
+            if (laneTarget > DL_MIN_LANES) laneTarget -= 1;
             await sleep(400 * (attempt + 1));
           }
         }
       };
 
-      let next = 0;
-      const runLane = async () => {
+      // A connection takes the next piece, downloads it, and repeats until none are left.
+      // A connection whose id is above the current target retires itself.
+      const runLane = async (laneId) => {
         for (;;) {
+          if (laneId >= laneTarget) return;
           const index = next++;
           if (index >= ranges.length) return;
           results[index + 1] = await fetchSegment(index + 1, ranges[index]);
         }
       };
-      await Promise.all([
-        firstDone,
-        ...Array.from({ length: Math.min(DL_CONCURRENCY, ranges.length) }, runLane),
-      ]);
+
+      const spawn = () => {
+        while (spawned < laneTarget && spawned < ranges.length) {
+          const run = runLane(spawned++);
+          run.catch(() => {}); // the failure is reported where the runs are awaited
+          laneRuns.push(run);
+        }
+      };
+
+      // Ramp: every DL_RAMP_MS compare the speed with the previous check. While each added
+      // connection lifts the speed by DL_RAMP_GAIN, add another; otherwise stop for good.
+      if (!rampDone) {
+        let lastBytes = receivedTotal();
+        let lastTime = performance.now();
+        let lastRate = 0;
+        rampTimer = window.setInterval(() => {
+          if (rampDone || controller.signal.aborted || next >= ranges.length) {
+            window.clearInterval(rampTimer);
+            return;
+          }
+          const now = performance.now();
+          const bytes = receivedTotal();
+          const rate = Math.max(0, bytes - lastBytes) / Math.max(0.001, (now - lastTime) / 1000);
+          lastBytes = bytes;
+          lastTime = now;
+          if (lastRate && rate < lastRate * DL_RAMP_GAIN) {
+            rampDone = true; // the last extra connection did not help
+            window.clearInterval(rampTimer);
+            return;
+          }
+          lastRate = rate;
+          if (laneTarget < DL_MAX_LANES) {
+            laneTarget += 1;
+            spawn();
+          } else {
+            rampDone = true;
+            window.clearInterval(rampTimer);
+          }
+        }, DL_RAMP_MS);
+      }
+
+      spawn();
+
+      // Wait for the first piece and every connection, including the ones added by the ramp.
+      let awaited = 0;
+      while (awaited < laneRuns.length) {
+        const batch = laneRuns.slice(awaited);
+        awaited = laneRuns.length;
+        await Promise.all(batch);
+      }
 
       const parts = results.flat();
       if (sizeOf(parts) !== total) {
@@ -1191,6 +1276,7 @@
       throw error;
     } finally {
       window.clearTimeout(timer);
+      window.clearInterval(rampTimer);
     }
   };
 

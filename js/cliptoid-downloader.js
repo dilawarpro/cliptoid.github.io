@@ -1499,7 +1499,7 @@
         status.textContent = nativeFallbackUsed
           ? "Your download has started. You can keep browsing."
           : "Your download is complete.";
-        progress.done(nativeFallbackUsed ? "Download started" : "Downloaded");
+        progress.done(nativeFallbackUsed ? "Download started" : "Saved to gallery");
         return;
       } catch (error) {
         const retryable = error.expired || error.retryable || error instanceof TypeError;

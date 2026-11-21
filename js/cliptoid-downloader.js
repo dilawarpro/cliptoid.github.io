@@ -1970,7 +1970,7 @@
   const isRateLimitError = (error) => error?.status === 429 || /limit/i.test(error?.message || "");
 
   // Converts the Worker's /api/info payload into the shape the UI uses.
-  // Also tolerates tikwm-style field names (play / hdplay / origin_cover / ...).
+  // Also tolerates cliptoid API-style field names (play / hdplay / origin_cover / ...).
   const normalizeInfo = (raw) => {
     const author = raw.author && typeof raw.author === "object" ? raw.author : {};
     const asUrl = (value) => (typeof value === "string" && /^https?:\/\//i.test(value) ? value : "");

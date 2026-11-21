@@ -105,7 +105,7 @@
   const submitLabel = document.createElement("span");
   submitLabel.textContent = "Download";
   const waitLabel = document.createElement("span");
-  waitLabel.textContent = "Please wait";
+  waitLabel.textContent = "Processing";
   submitButton.append(submitLabel, waitLabel);
   inputWrapper.append(input, locale, pasteButton, clearButton, submitButton);
   form.append(inputWrapper);

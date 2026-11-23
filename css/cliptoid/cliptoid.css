@@ -649,6 +649,10 @@ body {
 .cliptide-preview__video {
   aspect-ratio: 3 / 4;
   max-height: 160px;
+  display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .cliptide-download-section h3,

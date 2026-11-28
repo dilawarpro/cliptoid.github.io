@@ -51,7 +51,7 @@
   const MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024; // hard cap for in-browser slideshow video building
   const API_HEDGE_MS = 2500; // start a parallel backup request if no answer by then
   const API_DEADLINE_MS = 15000; // give up on the whole lookup after this
-  const INFO_STORAGE_KEY = "cliptoid.infoCache.v5"; // v5: adds post id + canonical url (history de-duplication)
+  const INFO_STORAGE_KEY = "cliptoid.infoCache.v6"; // v5: adds post id + canonical url (history de-duplication)
   const API_RATE_LIMIT_DELAY_MS = 1100; // wait before retrying after a rate-limit response
   const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // CDN links expire, keep cache short
   const INFO_CACHE_MAX = 50;
@@ -1375,7 +1375,7 @@
       progress.set(percent, "Downloading…");
     });
     if (!blob.size) throw new Error("The server returned an empty file.");
-    saveBlob(blob, filename);
+    saveBlob(blob, typeof filename === "function" ? filename(blob) : filename);
   };
 
   // One download from click to checkmark. `buildHref(tokens)` returns the Worker URL.
@@ -1992,6 +1992,9 @@
       hasHd: Boolean(hd) && !(typeof hd === "string" && hd === play),
       hasAudio: Boolean(music),
       tokens: raw.tokens && typeof raw.tokens === "object" ? raw.tokens : null,
+      type: typeof raw.type === "string" ? raw.type : "video", // video | photo | music | profile
+      avatar: typeof raw.avatar === "string" ? raw.avatar : "",
+      profile: raw.profile && typeof raw.profile === "object" ? raw.profile : null,
     };
   };
 
@@ -2127,6 +2130,454 @@
   };
 
   const renderResult = (info, postUrl) => {
+      /* ---------------------------------------------------------------------
+     Profile links: picture, recent 3 videos (swipe), complete profile view
+     --------------------------------------------------------------------- */
+
+  const injectProfileStyles = () => {
+    if (document.getElementById("cliptoid-profile-styles")) return;
+    const style = createElement("style");
+    style.id = "cliptoid-profile-styles";
+    style.textContent = `
+  .cliptoid-profile__head{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .cliptoid-profile__avatar{margin:0;width:112px;height:112px;border-radius:50%;overflow:hidden;flex:none;background:rgba(127,127,127,.18)}
+  .cliptoid-profile__avatar img{width:100%;height:100%;object-fit:cover;display:block}
+  .cliptoid-profile__meta{flex:1;min-width:200px}
+  .cliptoid-profile__meta .cliptide-result__title{margin:0;overflow-wrap:anywhere}
+  .cliptoid-profile__verified{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-left:8px;border-radius:50%;background:#20a5f6;color:#fff;font-size:12px;vertical-align:middle}
+  .cliptoid-profile__bio{white-space:pre-line;overflow-wrap:anywhere;margin:.5em 0}
+  .cliptoid-profile__note{opacity:.8;margin:.5em 0}
+  .cliptoid-profile__stats{display:flex;gap:20px;flex-wrap:wrap;list-style:none;padding:0;margin:.7em 0 0}
+  .cliptoid-profile__stats li{display:flex;flex-direction:column;font-size:.85em;opacity:.85}
+  .cliptoid-profile__stats strong{font-size:1.2em}
+  .cliptoid-profile__posts,.cliptoid-profile__all{margin-top:18px}
+  .cliptoid-profile__complete{margin-top:12px}
+
+  .cliptoid-recent__wrap{display:flex;gap:10px;align-items:stretch}
+  .cliptoid-recent__viewport{flex:1;min-width:0;height:460px;overflow-y:auto;scroll-snap-type:y mandatory;scrollbar-width:none;border-radius:12px;background:rgba(127,127,127,.12);outline-offset:2px;-webkit-user-select:none;user-select:none}
+  .cliptoid-recent__viewport::-webkit-scrollbar{display:none}
+  .cliptoid-recent__slide{height:100%;box-sizing:border-box;scroll-snap-align:start;scroll-snap-stop:always;display:flex;flex-direction:column;gap:8px;padding:8px}
+  .cliptoid-post__thumb{position:relative;flex:1;min-height:0;border-radius:10px;overflow:hidden;background:rgba(127,127,127,.18)}
+  .cliptoid-post__thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .cliptoid-post__duration{position:absolute;right:8px;bottom:8px;padding:1px 6px;border-radius:6px;background:rgba(0,0,0,.65);color:#fff;font-size:.75em}
+  .cliptoid-post__title{margin:0;font-size:.9em;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+  .cliptoid-post__actions{display:flex;flex-wrap:wrap;gap:8px}
+  .cliptoid-recent__nav{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;flex:none;width:44px}
+  .cliptoid-recent__arrow{width:40px;height:40px;border-radius:50%;border:1px solid rgba(127,127,127,.4);background:rgba(127,127,127,.12);color:inherit;font-size:18px;line-height:1;cursor:pointer}
+  .cliptoid-recent__arrow:disabled{opacity:.35;cursor:default}
+  .cliptoid-recent__count{font-size:.8em;font-variant-numeric:tabular-nums;opacity:.85}
+  .cliptoid-recent__hint{font-size:.8em;opacity:.7;margin:6px 0 0}
+
+  .cliptoid-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;list-style:none;padding:0;margin:12px 0}
+  .cliptoid-post{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .cliptoid-post .cliptoid-post__thumb{flex:none;aspect-ratio:3/4}
+  `;
+    document.head.append(style);
+  };
+  injectProfileStyles();
+
+  const formatCount = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return "0";
+    try {
+      return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+    } catch {
+      return String(n);
+    }
+  };
+
+  const formatDuration = (seconds) => {
+    const s = Math.round(Number(seconds) || 0);
+    return s > 0 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
+  };
+
+  const setShown = (element, shown) => {
+    element.style.display = shown ? "" : "none";
+  };
+
+  // GET /api/posts: one batch of the profile's videos. Throws the Worker's own message on failure.
+  const fetchPosts = async (profileUrl, cursor) => {
+    const requestUrl = new URL(`${API_BASE}/api/posts`);
+    requestUrl.searchParams.set("url", profileUrl);
+    requestUrl.searchParams.set("count", "12");
+    if (cursor) requestUrl.searchParams.set("cursor", cursor);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(requestUrl, { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit", signal: controller.signal });
+      let body = {};
+      try { body = await response.json(); } catch {}
+      if (!response.ok || !body.ok || !body.data) {
+        throw new Error(body.error || `The service returned HTTP ${response.status}. Try again shortly.`);
+      }
+      return body.data;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  const postsErrorMessage = (error) =>
+    error.name === "AbortError" ? "Loading the videos took too long. Please try again." : error.message || "Could not load the videos.";
+
+  // "Download Profile Picture" button.
+  const addAvatarDownload = (parent, postUrl) => {
+    const label = "Download Profile Picture";
+    const button = createElement("button", "cliptide-button cliptide-download cliptide-download--primary", label);
+    button.type = "button";
+    addButtonIcon(button, "download");
+    const progress = createProgressButton(button, label);
+    const resultInfo = { ...currentResult };
+    button.addEventListener("click", () => {
+      if (progress.busy) return;
+      const base = getDownloadBaseName();
+      runDownload({
+        progress,
+        status: dlStatusFor(parent),
+        resultInfo,
+        postUrl,
+        filename: (blob) => `${base}.${/png/i.test(blob.type) ? "png" : /webp/i.test(blob.type) ? "webp" : "jpg"}`,
+        buildHref: () => buildDownloadUrl(postUrl, "avatar", base, null),
+      });
+    });
+    parent.append(button);
+  };
+
+  // Thumbnail with duration badge, used by both the swipe viewer and the grid.
+  const createPostThumb = (post) => {
+    const thumb = createElement("div", "cliptoid-post__thumb");
+    const coverUrl = safeImageUrl(post.cover);
+    if (coverUrl) {
+      const image = createElement("img");
+      image.src = coverUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.draggable = false;
+      attachImageFallback(image, () => image.remove());
+      thumb.append(image);
+    }
+    const length = formatDuration(post.duration);
+    if (length) thumb.append(createElement("span", "cliptoid-post__duration", length));
+    return thumb;
+  };
+
+  // "Download" + "Fetch in downloader" for one post.
+  //  - Download: saves the video (or a ZIP for photo posts) with the progress button.
+  //  - Fetch in downloader: puts the post link in the downloader and looks it up, which gives the
+  //    normal result screen (HD, MP3, caption).
+  const addPostActions = (container, post, status) => {
+    const isPhoto = post.type === "photo";
+    const row = createElement("div", "cliptoid-post__actions");
+
+    const label = isPhoto ? "Photos (ZIP)" : "Download";
+    const button = createElement("button", "cliptide-button cliptide-download", label);
+    button.type = "button";
+    addButtonIcon(button, isPhoto ? "download" : "video", isPhoto ? "" : "MP4");
+    const progress = createProgressButton(button, label);
+    const resultInfo = { id: post.id, canonicalUrl: post.url, title: post.title || "", cover: safeImageUrl(post.cover) || "", tokens: null };
+    button.addEventListener("click", () => {
+      if (progress.busy) return;
+      if (!status.isConnected) container.append(status);
+      const base = getDownloadBaseName();
+      runDownload({
+        progress,
+        status,
+        resultInfo,
+        postUrl: post.url,
+        filename: `${base}.${isPhoto ? "zip" : "mp4"}`,
+        graceMs: isPhoto ? 4000 : undefined,
+        buildHref: (tokens) => buildDownloadUrl(post.url, isPhoto ? "zip" : "video", base, tokens),
+      });
+    });
+
+    const fetchButton = createElement("button", "cliptide-button", "Fetch in downloader");
+    fetchButton.type = "button";
+    addButtonIcon(fetchButton, "reload");
+    fetchButton.addEventListener("click", () => {
+      input.value = post.url;
+      runLookup(post.url);
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    row.append(button, fetchButton);
+    container.append(row);
+  };
+
+  const createStatusLine = () => {
+    const status = createElement("p", "cliptide-download-status");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    return status;
+  };
+
+  // Recent videos: one slide per post, swipe / scroll up and down (CSS scroll-snap), plus
+  // arrow buttons, the keyboard (up/down) and mouse dragging.
+  const buildRecentViewer = (posts) => {
+    const section = createElement("div", "cliptoid-recent");
+    section.append(createElement("h3", "", "Recent videos"));
+    const wrap = createElement("div", "cliptoid-recent__wrap");
+    const viewport = createElement("div", "cliptoid-recent__viewport");
+    viewport.tabIndex = 0;
+    viewport.setAttribute("role", "region");
+    viewport.setAttribute("aria-label", "Recent videos. Swipe or scroll up and down to browse.");
+    const status = createStatusLine();
+
+    posts.forEach((post) => {
+      const slide = createElement("div", "cliptoid-recent__slide");
+      slide.append(
+        createPostThumb(post),
+        createElement("p", "cliptoid-post__title", post.title || (post.type === "photo" ? "Photo post" : "Video"))
+      );
+      addPostActions(slide, post, status);
+      viewport.append(slide);
+    });
+
+    const nav = createElement("div", "cliptoid-recent__nav");
+    const up = createElement("button", "cliptoid-recent__arrow", "\u2191");
+    const down = createElement("button", "cliptoid-recent__arrow", "\u2193");
+    up.type = down.type = "button";
+    up.setAttribute("aria-label", "Previous video");
+    down.setAttribute("aria-label", "Next video");
+    const counter = createElement("span", "cliptoid-recent__count");
+    nav.append(up, counter, down);
+    wrap.append(viewport, nav);
+
+    let index = 0;
+    const sync = () => {
+      index = Math.max(0, Math.min(posts.length - 1, Math.round(viewport.scrollTop / Math.max(1, viewport.clientHeight))));
+      counter.textContent = `${index + 1} / ${posts.length}`;
+      up.disabled = index <= 0;
+      down.disabled = index >= posts.length - 1;
+    };
+    const go = (i) => {
+      const n = Math.max(0, Math.min(posts.length - 1, i));
+      viewport.scrollTo({ top: n * viewport.clientHeight, behavior: "smooth" });
+    };
+    let frame = 0;
+    viewport.addEventListener(
+      "scroll",
+      () => {
+        if (frame) return;
+        frame = window.requestAnimationFrame(() => {
+          frame = 0;
+          sync();
+        });
+      },
+      { passive: true }
+    );
+    up.addEventListener("click", () => go(index - 1));
+    down.addEventListener("click", () => go(index + 1));
+    viewport.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "PageDown") {
+        event.preventDefault();
+        go(index + 1);
+      } else if (event.key === "ArrowUp" || event.key === "PageUp") {
+        event.preventDefault();
+        go(index - 1);
+      }
+    });
+    // Mouse drag (touch and trackpad already swipe natively).
+    let dragStart = null;
+    viewport.addEventListener("pointerdown", (event) => {
+      dragStart = event.pointerType === "mouse" && event.button === 0 && !event.target.closest("button") ? event.clientY : null;
+    });
+    viewport.addEventListener("pointerup", (event) => {
+      if (dragStart === null) return;
+      const distance = event.clientY - dragStart;
+      dragStart = null;
+      if (Math.abs(distance) > 40) go(index + (distance < 0 ? 1 : -1));
+    });
+    viewport.addEventListener("pointercancel", () => {
+      dragStart = null;
+    });
+    sync();
+
+    section.append(wrap, status, createElement("p", "cliptoid-recent__hint", "Swipe up or down to see more."));
+    return section;
+  };
+
+  // One post in the "complete profile" grid.
+  const addPostGridItem = (grid, post) => {
+    const item = createElement("li", "cliptoid-post");
+    item.append(
+      createPostThumb(post),
+      createElement("p", "cliptoid-post__title", post.title || (post.type === "photo" ? "Photo post" : "Video"))
+    );
+    addPostActions(item, post, createStatusLine());
+    grid.append(item);
+  };
+
+    const renderResult = (info, postUrl) => {
+    if (info.type === "profile") {
+      renderProfile(info, postUrl);
+      return;
+    }
+    target.replaceChildren();
+    const profile = info.profile || {};
+    const avatarUrl = safeImageUrl(info.avatar) || safeImageUrl(info.cover);
+    const displayName = info.title || info.creator || "TikTok profile";
+    currentResult = { title: displayName, cover: avatarUrl || "", tokens: null, id: info.id || "", canonicalUrl: info.canonicalUrl || "" };
+
+    const card = createElement("article", "cliptide-result cliptoid-profile");
+    card.setAttribute("aria-label", "TikTok profile");
+
+    // --- picture + details ---
+    const head = createElement("section", "cliptoid-profile__head");
+    if (avatarUrl) {
+      const figure = createElement("figure", "cliptoid-profile__avatar");
+      const image = createElement("img");
+      image.src = avatarUrl;
+      image.alt = `${displayName} profile picture`;
+      image.decoding = "async";
+      image.setAttribute("fetchpriority", "high");
+      attachImageFallback(image, () => figure.remove());
+      figure.append(image);
+      head.append(figure);
+    }
+    const meta = createElement("div", "cliptoid-profile__meta");
+    const nameLine = createElement("h2", "cliptide-result__title", displayName);
+    if (profile.verified) {
+      const badge = createElement("span", "cliptoid-profile__verified", "\u2713");
+      badge.setAttribute("role", "img");
+      badge.setAttribute("aria-label", "Verified account");
+      nameLine.append(badge);
+    }
+    meta.append(nameLine);
+    if (info.creator) meta.append(createElement("p", "cliptide-result__creator", `@${info.creator.replace(/^@/, "")}`));
+    if (profile.bio) meta.append(createElement("p", "cliptoid-profile__bio", profile.bio));
+    const stats = createElement("ul", "cliptoid-profile__stats");
+    [["followers", "Followers"], ["following", "Following"], ["likes", "Likes"], ["videos", "Videos"]].forEach(([key, name]) => {
+      if (profile[key] === undefined || profile[key] === null) return;
+      const entry = createElement("li");
+      entry.append(createElement("strong", "", formatCount(profile[key])), createElement("span", "", name));
+      stats.append(entry);
+    });
+    if (stats.childElementCount) meta.append(stats);
+    if (profile.private) meta.append(createElement("p", "cliptoid-profile__note", "This account is private, so its videos can't be listed."));
+    head.append(meta);
+    card.append(head);
+
+    // --- profile picture download ---
+    const downloads = createElement("div", "cliptide-downloads");
+    if (avatarUrl) addAvatarDownload(downloads, postUrl);
+    if (downloads.childElementCount) {
+      const section = createElement("div", "cliptide-download-section");
+      section.append(createElement("h3", "", "Download your content"), downloads);
+      card.append(section);
+    }
+
+    // --- recent 3 videos (swipe) + complete profile ---
+    if (!profile.private) {
+      const all = []; // every post loaded so far, newest first
+      const seen = new Set();
+      let cursor = "";
+      let hasMore = false;
+      const ingest = (data) => {
+        const added = [];
+        (Array.isArray(data.items) ? data.items : []).forEach((post) => {
+          if (!post?.id || seen.has(post.id)) return;
+          seen.add(post.id);
+          all.push(post);
+          added.push(post);
+        });
+        cursor = data.cursor ? String(data.cursor) : "";
+        hasMore = Boolean(data.hasMore) && Boolean(cursor);
+        return added;
+      };
+
+      const recentSlot = createElement("section", "cliptoid-profile__posts");
+      const completeButton = createElement("button", "cliptide-button cliptoid-profile__complete", "View complete profile");
+      completeButton.type = "button";
+      addButtonIcon(completeButton, "video");
+      setShown(completeButton, false);
+
+      const fullSection = createElement("section", "cliptoid-profile__all");
+      fullSection.append(createElement("h3", "", "All posts"));
+      const grid = createElement("ul", "cliptoid-posts");
+      const fullStatus = createStatusLine();
+      const moreButton = createElement("button", "cliptide-button", "Load more");
+      moreButton.type = "button";
+      fullSection.append(grid, fullStatus, moreButton);
+      setShown(fullSection, false);
+      setShown(moreButton, false);
+      let gridBuilt = false;
+
+      const loadRecent = async () => {
+        const status = createStatusLine();
+        status.textContent = "Loading recent videos\u2026";
+        recentSlot.replaceChildren(createElement("h3", "", "Recent videos"), status);
+        try {
+          ingest(await fetchPosts(postUrl, ""));
+          if (!all.length) {
+            status.textContent = "No videos found for this profile.";
+            return;
+          }
+          recentSlot.replaceChildren(buildRecentViewer(all.slice(0, 3)));
+          setShown(completeButton, true);
+        } catch (error) {
+          status.textContent = postsErrorMessage(error);
+          const retry = createElement("button", "cliptide-button", "Try again");
+          retry.type = "button";
+          retry.addEventListener("click", loadRecent);
+          recentSlot.append(retry);
+        }
+      };
+
+      completeButton.addEventListener("click", () => {
+        const opening = fullSection.style.display === "none";
+        setShown(fullSection, opening);
+        setButtonLabel(completeButton, opening ? "Hide complete profile" : "View complete profile");
+        if (!opening) return;
+        if (!gridBuilt) {
+          all.forEach((post) => addPostGridItem(grid, post));
+          gridBuilt = true;
+          setShown(moreButton, hasMore);
+        }
+        fullSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+
+      let loadingMore = false;
+      moreButton.addEventListener("click", async () => {
+        if (loadingMore) return;
+        loadingMore = true;
+        moreButton.disabled = true;
+        fullStatus.textContent = "Loading more videos\u2026";
+        try {
+          ingest(await fetchPosts(postUrl, cursor)).forEach((post) => addPostGridItem(grid, post));
+          fullStatus.textContent = "";
+          setShown(moreButton, hasMore);
+        } catch (error) {
+          fullStatus.textContent = postsErrorMessage(error);
+        } finally {
+          loadingMore = false;
+          moreButton.disabled = false;
+        }
+      });
+
+      card.append(recentSlot, completeButton, fullSection);
+      loadRecent();
+    }
+
+    // --- same share row and "download another" button as the other result screens ---
+    const actions = createElement("section", "cliptide-result__actions");
+    actions.setAttribute("aria-label", "Share and install");
+    if (shareRow) actions.append(shareRow);
+    if (actions.childElementCount) card.append(actions);
+
+    const another = createElement("button", "cliptide-another", "Download another video");
+    another.type = "button";
+    addButtonIcon(another, "repeat");
+    another.addEventListener("click", () => {
+      lastRenderedUrl = "";
+      target.replaceChildren();
+      input.value = "";
+      input.focus();
+    });
+    card.append(another);
+
+    target.append(card);
+  };
+
     target.replaceChildren();
     const card = createElement("article", "cliptide-result");
     card.setAttribute("aria-label", "TikTok download results");
